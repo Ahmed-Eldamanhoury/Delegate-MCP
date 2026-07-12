@@ -9,10 +9,12 @@ src/
   server/mcpServer.js     builds the McpServer instance, owns the shared JobManager, registers all 6 tools
   server/health.js        non-blocking check that the configured claude binary exists
   handlers/                one file per tool: MCP-shaped request/response formatting
-  services/delegationService.js  shared submit path: builds an ExecutionContext, calls jobManager.submit()
+  services/delegationService.js  shared submit path: builds an ExecutionContext, calls jobManager.submit(),
+                                    triggers workspace create/persist/prune (fire-and-forget)
   services/claudeCliService.js   pure arg-building + child_process spawn/parse (the actual CLI delegation)
   services/jobManager.js  background task runner: queueing, concurrency, cancellation, lifecycle, progress
   services/jobStore.js     storage interface for Job records (in-memory today, swappable)
+  services/workspaceManager.js  per-job on-disk artifact mirror (metadata/context/stdout/stderr/result)
   models/schemas.js       zod input schema for delegate_task/delegate_submit (the public tool contract)
   models/executionContext.js  ExecutionContext shape + factory — the CLI service's only input besides prompt
   models/job.js            Job shape, status enum, phase/progress metadata, summarizeJob()/toJobView()
@@ -106,6 +108,18 @@ default 2), tracking each as a `Job` (`models/job.js`).
   `delegate_task` stay synchronous while still going through the same job system as
   `delegate_submit`.
 
+## Workspace (persistence layer)
+
+See [ADR-0001](adr/ADR-0001-workspace-and-artifact-architecture.md) for the full design.
+Summary: `delegationService.submitDelegation()` calls `workspaceManager.createJobWorkspace()`
+right after `jobManager.submit()` (writes `context.json` + an empty `artifacts/`), then
+attaches a fire-and-forget `jobManager.waitForCompletion(jobId).then(...)` that calls
+`persistJobArtifacts()` (writes `metadata.json`/`stdout.log`/`stderr.log`/`result.json`) and
+`pruneWorkspaces()`. This works because `JobManager.waitForCompletion()` already supports
+multiple independent waiters per job id — `delegate_task`'s own `await
+waitForCompletion(jobId)` and this fire-and-forget one don't interfere. The workspace is a
+write-once mirror taken at settle time, never a second source of truth for job state.
+
 ## Security: no shell in the CLI spawn
 
 `claudeCliService.invoke()` spawns `config.claudeBin` directly via `execFile` with no shell.
@@ -128,3 +142,13 @@ whole tree in that case.
 
 `max_budget_usd` (both `delegate_task` and `delegate_submit`) is `positive()` in the zod
 schema — zero or negative values are rejected before a job is ever created.
+
+## Security: workspace path safety
+
+`workspaceManager.js`'s `isValidJobId()` rejects anything that isn't a UUID before it's ever
+joined into a filesystem path — job ids are always `randomUUID()` output from `JobManager`,
+so this is defense in depth, not a currently-reachable gap. Filenames within a job's
+directory are fixed literals (`metadata.json`, etc.), never derived from job content. Every
+workspace operation is wrapped so a failure (disk full, permissions, invalid id) is logged
+and swallowed — it never affects a tool's response. `context.json` omits
+`ExecutionContext.environment` (`process.env`, which may hold secrets).

@@ -22,6 +22,12 @@ export function validateConfig(config) {
   if (!Number.isInteger(config.maxJobHistory) || config.maxJobHistory <= 0) {
     problems.push("maxJobHistory must be a positive integer");
   }
+  if (!config.workspaceRoot || typeof config.workspaceRoot !== "string") {
+    problems.push("workspaceRoot must be a non-empty string");
+  }
+  if (!Number.isInteger(config.maxWorkspaceHistory) || config.maxWorkspaceHistory <= 0) {
+    problems.push("maxWorkspaceHistory must be a positive integer");
+  }
 
   if (problems.length > 0) {
     throw new ConfigError(`Invalid configuration: ${problems.join("; ")}`);

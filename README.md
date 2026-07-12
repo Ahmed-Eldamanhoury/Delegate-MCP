@@ -21,6 +21,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the code layout.
 |---|---|---|
 | `CLAUDE_DELEGATE_BIN` | path to `claude.exe` under the npm global dir | override if `claude` is installed elsewhere. Point this at the real executable, not the `.cmd`/`.bat` shim — spawning the shim needs a shell, which is what the default deliberately avoids (see Security note below). |
 | `CLAUDE_DELEGATE_BASE_DIR` | process cwd | default working directory for delegated tasks |
+| `CLAUDE_DELEGATE_WORKSPACE_DIR` | `<project>/workspace` | root for per-job on-disk artifacts — see Workspace below |
+| `CLAUDE_DELEGATE_MAX_WORKSPACE_HISTORY` | `100` | oldest completed job workspaces beyond this are deleted |
 
 ## Tool: `delegate_task`
 
@@ -122,6 +124,30 @@ limitation noted in earlier versions of this doc (that `delegate_task` blocks so
 window to cancel it) is resolved by using `delegate_submit` for anything you might want to
 cancel.
 
+## Workspace
+
+Every job (from either `delegate_task` or `delegate_submit`) gets a durable on-disk record at
+`<workspaceRoot>/jobs/<job-id>/`, independent of `JobManager`'s in-memory history (which is
+capped and lost on restart):
+
+```
+metadata.json   # id, tool, status, timestamps, runtimeMs, exitCode, cost, error
+context.json    # the ExecutionContext the job ran with (environment redacted — see below)
+stdout.log      # raw CLI stdout
+stderr.log      # raw CLI stderr
+result.json     # parsed CLI JSON result (or null if unparseable)
+artifacts/      # reserved for future job-produced files; unused today
+```
+
+This is a **mirror, not a second source of truth** — `JobManager`'s in-memory state is always
+authoritative for anything currently running; workspace files are written once, after a job
+settles. A write failure here is logged and otherwise ignored — it never affects a tool
+response. `context.json` omits `ExecutionContext.environment` (`process.env`) since writing
+it verbatim to disk would leak secrets. See
+[docs/adr/ADR-0001-workspace-and-artifact-architecture.md](docs/adr/ADR-0001-workspace-and-artifact-architecture.md)
+for the full design and [docs/FOUNDATION_FREEZE.md](docs/FOUNDATION_FREEZE.md) for what's
+contractually frozen across this project.
+
 ## Security note
 
 `prompt` is arbitrary text (it may ultimately come from web content an orchestrating model
@@ -139,9 +165,12 @@ npm start          # run the server directly (for manual stdio testing)
 ```
 
 `tests/asyncExecution.integration.test.js` exercises the full submit → status → history →
-cancel(queued) → cancel(running) → completed lifecycle end to end, wiring the real handlers
-to a real `JobManager` with a stubbed `claudeCliService` (so it runs without `claude` being
-installed or logged in).
+cancel(queued) → cancel(running) → completed lifecycle end to end (plus workspace creation,
+concurrent jobs, failed/cancelled jobs, and pruning), wiring the real handlers to a real
+`JobManager` with a stubbed `claudeCliService` (so it runs without `claude` being installed
+or logged in) and a temp `workspaceRoot` (never the project's own `workspace/` dir).
+`tests/workspaceManager.test.js` covers the workspace layer in isolation, including path-
+traversal rejection.
 
 Tool-level smoke test with [MCP Inspector](https://github.com/modelcontextprotocol/inspector):
 

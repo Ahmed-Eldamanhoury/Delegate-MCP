@@ -1,5 +1,47 @@
 # Changelog
 
+## [1.5.0] - 2026-07-13
+
+Foundation Freeze certified ([docs/FOUNDATION_FREEZE.md](docs/FOUNDATION_FREEZE.md)) plus the
+Workspace & Artifact wave ([ADR-0001](docs/adr/ADR-0001-workspace-and-artifact-architecture.md)).
+
+### Added
+- **Workspace persistence layer** (`src/services/workspaceManager.js`): every job gets
+  `<workspaceRoot>/jobs/<job-id>/{metadata.json, context.json, stdout.log, stderr.log,
+  result.json, artifacts/}`, written once at settle time as a best-effort mirror of
+  `JobManager`'s state — never a second source of truth. Wired into the shared
+  `delegationService.submitDelegation()`, so both `delegate_task` and `delegate_submit` get
+  it identically with no duplicated logic.
+- Two new config fields: `workspaceRoot` (`CLAUDE_DELEGATE_WORKSPACE_DIR`, default
+  `<project>/workspace`) and `maxWorkspaceHistory` (`CLAUDE_DELEGATE_MAX_WORKSPACE_HISTORY`,
+  default 100) — oldest completed workspaces beyond the cap are pruned automatically, never
+  touching an in-flight job's directory.
+- `claudeCliService.invoke()`'s resolved result gains a `stderr` field (previously discarded
+  entirely) so it can be persisted to `stderr.log`.
+- 13 new tests: `tests/workspaceManager.test.js` (unit — path-traversal rejection, context
+  redaction, artifact writes, pruning) and 5 new integration tests (workspace creation,
+  concurrent jobs get isolated directories, failed/cancelled jobs persist correctly, pruning
+  under load).
+
+### Fixed (test hygiene, found while wiring this wave)
+- The integration test suite was writing real job directories into the project's own
+  `workspace/` folder (no `workspaceRoot` override) — fixed by pointing tests at an isolated
+  `os.tmpdir()` location, cleaned up via `node:test`'s `after()`.
+
+### Security
+- `isValidJobId()` rejects any non-UUID string before it's used to build a filesystem path
+  (defense in depth — job ids are always `JobManager`-generated `randomUUID()` output).
+- `context.json` never contains `ExecutionContext.environment` (`process.env`) — redacted to
+  a placeholder string, since persisting it verbatim would write secrets to disk.
+- All workspace I/O is wrapped to fail safe: a write/prune error is logged and swallowed,
+  never surfaces as a tool error or affects a job's actual outcome.
+
+### Compatibility
+Zero change to any MCP tool schema, `ExecutionContext`'s shape, or `JobManager`'s public
+methods — re-verified via Inspector (`tools/list` byte-identical to the pre-wave snapshot)
+and a live end-to-end `delegate_task` call (workspace files confirmed written for a real,
+non-stubbed job).
+
 ## [1.4.3] - 2026-07-13
 
 Zero-defect hardening pass (second consecutive audit; see 1.4.2 for the first).

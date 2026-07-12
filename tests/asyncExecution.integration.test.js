@@ -1,7 +1,11 @@
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, existsSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { JobManager } from "../src/services/jobManager.js";
 import { loadConfig } from "../src/config/index.js";
+import { getWorkspaceRoot } from "../src/services/workspaceManager.js";
 import { createDelegateTaskHandler } from "../src/handlers/delegateTaskHandler.js";
 import { createDelegateSubmitHandler } from "../src/handlers/delegateSubmitHandler.js";
 import { createDelegateStatusHandler } from "../src/handlers/delegateStatusHandler.js";
@@ -9,7 +13,13 @@ import { createDelegateHistoryHandler } from "../src/handlers/delegateHistoryHan
 import { createDelegateCancelHandler } from "../src/handlers/delegateCancelHandler.js";
 import { waitUntil } from "./testUtils.js";
 
-const config = loadConfig({});
+// Handlers go through the real delegationService -> workspaceManager (not stubbed) so these
+// tests also exercise real disk I/O — but isolated to a temp dir, never the project's own
+// workspace/ directory.
+const tempWorkspaceRoot = mkdtempSync(join(tmpdir(), "claude-delegate-test-"));
+after(() => rmSync(tempWorkspaceRoot, { recursive: true, force: true }));
+
+const config = { ...loadConfig({}), workspaceRoot: tempWorkspaceRoot };
 const logger = { info() {}, warn() {}, error() {}, debug() {} };
 
 /** Stand-in for claudeCliService — same (prompt, context, config, {signal, onSpawn}) contract. */
@@ -172,4 +182,102 @@ test("full lifecycle: submit -> status -> history -> cancel(queued) -> cancel(ru
   const finalHistory = await fast.history({ limit: 10 });
   const finalIds = finalHistory.structuredContent.jobs.map((j) => j.id);
   assert.ok([jobIdA, jobIdB, jobIdC].every((id) => finalIds.includes(id)));
+});
+
+test("workspace: a completed job's artifacts are persisted to disk (metadata, stdout, result)", async () => {
+  const jobManager = new JobManager({ maxConcurrent: 1 });
+  const { task } = buildHandlers(jobManager, makeStubService({ delayMs: 5 }));
+
+  const response = await task(baseInput({ prompt: "workspace check" }));
+  assert.equal(response.isError, false);
+
+  const jobs = jobManager.listJobs();
+  const jobId = jobs[jobs.length - 1].id;
+  const dir = join(getWorkspaceRoot(config), jobId);
+
+  await waitUntil(() => existsSync(join(dir, "metadata.json")));
+  const metadata = JSON.parse(readFileSync(join(dir, "metadata.json"), "utf8"));
+  assert.equal(metadata.status, "completed");
+  assert.equal(readFileSync(join(dir, "stdout.log"), "utf8"), "{}");
+  assert.deepEqual(JSON.parse(readFileSync(join(dir, "result.json"), "utf8")).result, "stub ok");
+  assert.ok(existsSync(join(dir, "context.json")));
+  assert.ok(existsSync(join(dir, "artifacts")));
+});
+
+test("workspace: a failed job's workspace records the error", async () => {
+  const jobManager = new JobManager({ maxConcurrent: 1 });
+  const { task } = buildHandlers(jobManager, makeStubService({ delayMs: 5, shouldFail: true }));
+
+  await task(baseInput({ prompt: "will fail" }));
+  const jobId = jobManager.listJobs()[0].id;
+  const dir = join(getWorkspaceRoot(config), jobId);
+
+  await waitUntil(() => existsSync(join(dir, "metadata.json")));
+  const metadata = JSON.parse(readFileSync(join(dir, "metadata.json"), "utf8"));
+  assert.equal(metadata.status, "failed");
+  assert.equal(metadata.error, "stub cli failure");
+});
+
+test("workspace: a cancelled job's workspace still gets persisted (as cancelled, not left dangling)", async () => {
+  const jobManager = new JobManager({ maxConcurrent: 1 });
+  const { submit, cancel } = buildHandlers(jobManager, makeStubService({ delayMs: 5000 }));
+
+  const submitted = await submit(baseInput({ prompt: "will be cancelled" }));
+  const jobId = submitted.structuredContent.job_id;
+  await waitUntil(() => ["starting", "running"].includes(jobManager.getJob(jobId).status));
+
+  await cancel({ job_id: jobId });
+  await waitUntil(() => jobManager.getJob(jobId).status === "cancelled");
+
+  const dir = join(getWorkspaceRoot(config), jobId);
+  await waitUntil(() => existsSync(join(dir, "metadata.json")));
+  const metadata = JSON.parse(readFileSync(join(dir, "metadata.json"), "utf8"));
+  assert.equal(metadata.status, "cancelled");
+});
+
+test("workspace: concurrent jobs each get their own isolated workspace directory", async () => {
+  const jobManager = new JobManager({ maxConcurrent: 3 });
+  const { submit } = buildHandlers(jobManager, makeStubService({ delayMs: 15 }));
+
+  const submitted = await Promise.all([
+    submit(baseInput({ prompt: "concurrent a" })),
+    submit(baseInput({ prompt: "concurrent b" })),
+    submit(baseInput({ prompt: "concurrent c" })),
+  ]);
+  const jobIds = submitted.map((r) => r.structuredContent.job_id);
+  assert.equal(new Set(jobIds).size, 3, "each job must have a distinct id");
+
+  await Promise.all(jobIds.map((id) => waitUntil(() => jobManager.getJob(id).status === "completed")));
+
+  const dirs = jobIds.map((id) => join(getWorkspaceRoot(config), id));
+  await Promise.all(dirs.map((dir) => waitUntil(() => existsSync(join(dir, "metadata.json")))));
+  // Each workspace only contains its own job's data — no cross-writes between concurrent jobs.
+  dirs.forEach((dir, i) => {
+    const metadata = JSON.parse(readFileSync(join(dir, "metadata.json"), "utf8"));
+    assert.equal(metadata.id, jobIds[i]);
+  });
+});
+
+test("workspace: pruneWorkspaces keeps disk usage bounded across many completed jobs", async () => {
+  const jobManager = new JobManager({ maxConcurrent: 2 });
+  const boundedConfig = { ...config, maxWorkspaceHistory: 3 };
+  const task = createDelegateTaskHandler({
+    config: boundedConfig,
+    logger,
+    jobManager,
+    service: makeStubService({ delayMs: 5 }),
+  });
+
+  for (let i = 0; i < 6; i++) {
+    await task(baseInput({ prompt: `bounded ${i}` }));
+  }
+
+  // The workspace persist+prune chain is a separate fire-and-forget waiter on each job (see
+  // delegationService.js) from delegate_task's own await — poll rather than assume ordering.
+  const jobsDir = getWorkspaceRoot(boundedConfig);
+  const { readdirSync } = await import("node:fs");
+  await waitUntil(() => existsSync(jobsDir) && readdirSync(jobsDir).length <= 3);
+
+  const remaining = readdirSync(jobsDir);
+  assert.ok(remaining.length <= 3, `expected at most 3 workspaces retained, found ${remaining.length}`);
 });

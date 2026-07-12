@@ -37,11 +37,11 @@ export function buildArgs(prompt, context) {
   return args;
 }
 
-function parseResult(raw, exitCode) {
+function parseResult(raw, exitCode, stderr) {
   try {
-    return { raw, parsed: JSON.parse(raw), exitCode };
+    return { raw, parsed: JSON.parse(raw), exitCode, stderr };
   } catch {
-    return { raw, parsed: null, exitCode };
+    return { raw, parsed: null, exitCode, stderr };
   }
 }
 
@@ -92,7 +92,7 @@ export function buildExecOptions(context, config) {
  * @param {{signal?: AbortSignal, onSpawn?: () => void}} [opts] onSpawn fires once the OS has
  *   actually started the subprocess (Node's 'spawn' event) — used to mark a job "running"
  *   rather than merely "starting".
- * @returns {Promise<{raw: string, parsed: import("../models/schemas.js").ClaudeCliResult | null, exitCode: number}>}
+ * @returns {Promise<{raw: string, parsed: import("../models/schemas.js").ClaudeCliResult | null, exitCode: number, stderr: string}>}
  */
 export function invoke(prompt, context, config, { signal, onSpawn } = {}) {
   const args = buildArgs(prompt, context);
@@ -102,7 +102,7 @@ export function invoke(prompt, context, config, { signal, onSpawn } = {}) {
       config.claudeBin,
       args,
       { ...buildExecOptions(context, config), signal },
-      (err, stdout) => {
+      (err, stdout, stderr) => {
         if (err) {
           if (shouldCleanupProcessTree(process.platform, err)) {
             killWindowsProcessTree(child.pid);
@@ -110,9 +110,9 @@ export function invoke(prompt, context, config, { signal, onSpawn } = {}) {
           if (err.name === "AbortError") return reject(err);
           // claude -p exits non-zero on task failure but still prints JSON on stdout.
           if (!stdout) return reject(err);
-          return resolve(parseResult(stdout, typeof err.code === "number" ? err.code : 1));
+          return resolve(parseResult(stdout, typeof err.code === "number" ? err.code : 1, stderr));
         }
-        resolve(parseResult(stdout, 0));
+        resolve(parseResult(stdout, 0, stderr));
       }
     );
     if (onSpawn) child.once("spawn", onSpawn);

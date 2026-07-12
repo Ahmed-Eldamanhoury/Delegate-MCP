@@ -7,7 +7,7 @@ import { submitDelegation } from "../services/delegationService.js";
  */
 export function createDelegateSubmitHandler({ config, logger, jobManager, service }) {
   return async function delegateSubmitHandler(input) {
-    const jobId = submitDelegation({ input, config, jobManager, service, toolName: "delegate_submit" });
+    const jobId = submitDelegation({ input, config, jobManager, logger, service, toolName: "delegate_submit" });
     const job = jobManager.getJob(jobId);
 
     logger.info("delegate_submit accepted", { jobId, model: input.model, status: job.status });

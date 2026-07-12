@@ -12,7 +12,7 @@ export function createDelegateTaskHandler({ config, logger, jobManager, service 
   return async function delegateTaskHandler(input) {
     logger.info("delegate_task started", { model: input.model, effort: input.effort });
 
-    const jobId = submitDelegation({ input, config, jobManager, service, toolName: "delegate_task" });
+    const jobId = submitDelegation({ input, config, jobManager, logger, service, toolName: "delegate_task" });
     const job = await jobManager.waitForCompletion(jobId);
 
     if (job.status === "failed") {
