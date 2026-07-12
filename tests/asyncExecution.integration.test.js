@@ -90,6 +90,22 @@ test("delegate_task still blocks until completion, with an unchanged response sh
   assert.equal(response.structuredContent.result, "stub ok");
 });
 
+test("delegate_task falls back to raw text when the CLI output isn't JSON", async () => {
+  const jobManager = new JobManager({ maxConcurrent: 1 });
+  const nonJsonService = {
+    async invoke(prompt, context, cfg, { onSpawn } = {}) {
+      onSpawn?.();
+      return { raw: "not json output", parsed: null, exitCode: 0 };
+    },
+  };
+  const { task } = buildHandlers(jobManager, nonJsonService);
+
+  const response = await task(baseInput());
+  assert.equal(response.isError, undefined);
+  assert.equal(response.content[0].text, "not json output");
+  assert.equal(response.structuredContent, undefined);
+});
+
 test("delegate_task behaves identically whether or not delegate_submit/jobManager machinery is also in use", async () => {
   const jobManager = new JobManager({ maxConcurrent: 2 });
   const { task, submit } = buildHandlers(jobManager, makeStubService({ delayMs: 10 }));
