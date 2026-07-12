@@ -1,5 +1,4 @@
-const MODELS = ["haiku", "sonnet", "opus", "fable"];
-const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+import { MODELS, EFFORTS } from "../models/schemas.js";
 
 /** @param {{config: import("../config/index.js").DelegateConfig}} deps */
 export function createDelegateModelsHandler({ config }) {

@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { READONLY_TOOLS, DEFAULT_MAX_BUDGET_USD } from "../config/index.js";
 
+// Single source of truth for the model/effort enums — previously duplicated verbatim in
+// delegateModelsHandler.js, which now imports these instead of re-declaring them.
+export const MODELS = ["haiku", "sonnet", "opus", "fable"];
+export const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+
 /**
  * Raw zod shape for the `delegate_task` tool input. Kept byte-for-byte identical to the
  * pre-refactor inline schema — the public MCP tool interface must not change.
@@ -8,11 +13,11 @@ import { READONLY_TOOLS, DEFAULT_MAX_BUDGET_USD } from "../config/index.js";
 export const DelegateTaskInputShape = {
   prompt: z.string().describe("The task for the subagent to perform."),
   model: z
-    .enum(["haiku", "sonnet", "opus", "fable"])
+    .enum(MODELS)
     .default("sonnet")
     .describe("Which model tier runs this task. Default sonnet (cheap worker)."),
   effort: z
-    .enum(["low", "medium", "high", "xhigh", "max"])
+    .enum(EFFORTS)
     .default("low")
     .describe("Reasoning effort. Default low — raise only for genuinely hard tasks."),
   allowed_tools: z

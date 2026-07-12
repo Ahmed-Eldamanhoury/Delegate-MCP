@@ -18,7 +18,6 @@ export const DEFAULT_MAX_JOB_HISTORY = 500;
  * @typedef {Object} DelegateConfig
  * @property {string} claudeBin
  * @property {string} baseCwd
- * @property {string} readonlyTools
  * @property {Record<string,string>} modelFallbacks
  * @property {number} defaultMaxBudgetUsd
  * @property {number} spawnTimeoutMs
@@ -32,7 +31,6 @@ export function loadConfig(env = process.env) {
   return Object.freeze({
     claudeBin: env.CLAUDE_DELEGATE_BIN || DEFAULT_BIN,
     baseCwd: env.CLAUDE_DELEGATE_BASE_DIR || process.cwd(),
-    readonlyTools: READONLY_TOOLS,
     modelFallbacks: MODEL_FALLBACKS,
     defaultMaxBudgetUsd: DEFAULT_MAX_BUDGET_USD,
     spawnTimeoutMs: 10 * 60 * 1000,

@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.4.3] - 2026-07-13
+
+Zero-defect hardening pass (second consecutive audit; see 1.4.2 for the first).
+
+### Fixed
+- **Duplicated model/effort constants**: `["haiku","sonnet","opus","fable"]` and
+  `["low","medium","high","xhigh","max"]` were each hand-typed twice — once in
+  `schemas.js`'s zod enum, once in `delegateModelsHandler.js`. Exported `MODELS`/`EFFORTS`
+  from `schemas.js` as the single source; the handler now imports them. Regression test
+  asserts the schema's enum options and the handler's listing both derive from the same array.
+- **Dead config field**: `config.readonlyTools` was computed by `loadConfig()` but never
+  read anywhere (`schemas.js` already imported the `READONLY_TOOLS` constant directly) —
+  same class of defect as `maxBufferBytes` fixed in 1.4.2. Removed.
+
+### Verified, not changed
+Re-audited for TODO/FIXME/HACK markers, `shell: true`, `eval`/`exec`/insecure-randomness
+patterns, and unreachable exports — none found. `DelegateError` (base class of `ConfigError`)
+has no direct call sites but is an active, used superclass, not dead code.
+
 ## [1.4.2] - 2026-07-13
 
 Self-Harness-style audit of the current implementation (no PR existed to review — see below).
