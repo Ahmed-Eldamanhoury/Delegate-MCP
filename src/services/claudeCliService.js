@@ -1,8 +1,6 @@
 import { execFile } from "node:child_process";
 import { MODEL_FALLBACKS } from "../config/index.js";
 
-const MAX_BUFFER_BYTES = 20 * 1024 * 1024;
-
 /**
  * Builds the argv array for `claude -p ...`. Pure function — no I/O — so it's unit-testable
  * without spawning a real process.
@@ -66,6 +64,22 @@ function killWindowsProcessTree(pid) {
 }
 
 /**
+ * Pure so config.maxBufferBytes actually flowing through is unit-testable without spawning
+ * a real process (this was previously duplicated as a hardcoded local constant, silently
+ * ignoring config.maxBufferBytes entirely).
+ * @param {import("../models/executionContext.js").ExecutionContext} context
+ * @param {import("../config/index.js").DelegateConfig} config
+ */
+export function buildExecOptions(context, config) {
+  return {
+    cwd: context.workingDirectory,
+    env: context.environment,
+    maxBuffer: config.maxBufferBytes,
+    timeout: context.timeoutMs,
+  };
+}
+
+/**
  * Spawns `claude -p` and resolves with the parsed JSON result.
  *
  * `config.claudeBin` must point at the real executable (e.g. claude.exe), not the .cmd/.bat
@@ -87,13 +101,7 @@ export function invoke(prompt, context, config, { signal, onSpawn } = {}) {
     const child = execFile(
       config.claudeBin,
       args,
-      {
-        cwd: context.workingDirectory,
-        env: context.environment,
-        maxBuffer: MAX_BUFFER_BYTES,
-        timeout: context.timeoutMs,
-        signal,
-      },
+      { ...buildExecOptions(context, config), signal },
       (err, stdout) => {
         if (err) {
           if (shouldCleanupProcessTree(process.platform, err)) {

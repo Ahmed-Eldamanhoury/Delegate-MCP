@@ -23,7 +23,9 @@ const SUBMIT_DESCRIPTION =
   "finish. Poll progress with delegate_status/delegate_history, cancel with delegate_cancel. Same " +
   "model tiers, fallback behavior, and default tool restrictions as delegate_task.";
 
-const JOB_ID_FIELD = z.string().describe("Job id, as returned by delegate_task or delegate_history.");
+const JOB_ID_FIELD = z
+  .string()
+  .describe("Job id, as returned by delegate_task, delegate_submit, or delegate_history.");
 
 /**
  * @param {{config: import("../config/index.js").DelegateConfig, logger: ReturnType<import("../logging/logger.js").createLogger>, version: string}} deps
@@ -62,8 +64,8 @@ export function createMcpServer({ config, logger, version }) {
     {
       title: "Check a delegated job's status",
       description:
-        "Looks up a delegate_task job by id: current status, timestamps, runtime, cost, and the " +
-        "full result once it has finished.",
+        "Looks up a delegate_task/delegate_submit job by id: current status, timestamps, runtime, " +
+        "cost, and the full result once it has finished.",
       inputSchema: { job_id: JOB_ID_FIELD },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -74,7 +76,8 @@ export function createMcpServer({ config, logger, version }) {
     "delegate_history",
     {
       title: "List recent delegated jobs",
-      description: "Lists recent delegate_task jobs, most recent first, with status/cost summaries.",
+      description:
+        "Lists recent delegate_task/delegate_submit jobs, most recent first, with status/cost summaries.",
       inputSchema: {
         limit: z.number().int().positive().default(20).describe("Maximum number of jobs to return."),
         status: z
@@ -112,8 +115,9 @@ export function createMcpServer({ config, logger, version }) {
     {
       title: "Cancel a delegated job",
       description:
-        "Cancels a queued or running delegate_task job by id. Running jobs are aborted (their " +
-        "subprocess is killed); already-finished jobs cannot be cancelled.",
+        "Cancels a queued, starting, or running delegate_task/delegate_submit job by id. " +
+        "Starting/running jobs are aborted (their subprocess is killed); already-finished jobs " +
+        "cannot be cancelled.",
       inputSchema: { job_id: JOB_ID_FIELD },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },

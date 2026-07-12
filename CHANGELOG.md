@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.4.2] - 2026-07-13
+
+Self-Harness-style audit of the current implementation (no PR existed to review — see below).
+
+### Fixed
+- **Documentation drift in live tool descriptions**: `delegate_status`, `delegate_history`,
+  `delegate_cancel`, and the shared `job_id` field description still said "delegate_task job"
+  and omitted the `starting` status — stale since `delegate_submit` and `starting` were added
+  in 1.4.0. These are LLM-facing strings read via `tools/list`, not just human docs. Fixed;
+  `delegate_task`'s own schema re-verified unchanged.
+- **Dead/duplicated config**: `config.maxBufferBytes` was computed but never read —
+  `claudeCliService.js` had its own separate hardcoded `MAX_BUFFER_BYTES` constant instead
+  (confirmed via grep). Extracted a testable `buildExecOptions()` so config is the actual
+  source of truth again, with a regression test proving it.
+- **Inconsistent error-handling coverage in `JobManager._run()`**: the `starting` transition's
+  store write happened before the try/catch that covers every other transition, so a store
+  failure there would be an unhandled rejection (`_drain()` calls `_run()` without awaiting or
+  `.catch()`ing it) — currently benign only because `InMemoryJobStore` never throws, but the
+  architecture explicitly anticipates a swappable/persistent store that could. Moved inside
+  the try; regression test simulates a throwing store and confirms the job now lands in
+  `failed` instead of hanging silently at `queued`.
+- **`_trimHistory()` duplicated work**: re-called `store.list()` (O(n)) on every eviction-loop
+  iteration instead of tracking a decrementing count, making a bulk eviction O(n²). Fixed to
+  a single O(n) pass; also closes a real test-coverage gap — this eviction feature (since
+  1.2.0) had zero prior tests.
+
+### Note
+`/review`'s invocation named a GitHub PR `Use` to diff — no such PR exists (repo has no
+remote; confirmed via `git remote -v`/`gh pr view`). Reviewed the current implementation
+(local commits) instead, per user confirmation.
+
 ## [1.4.1] - 2026-07-13
 
 ### Fixed

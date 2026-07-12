@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildArgs, shouldCleanupProcessTree } from "../src/services/claudeCliService.js";
+import { buildArgs, shouldCleanupProcessTree, buildExecOptions } from "../src/services/claudeCliService.js";
 import { createExecutionContext } from "../src/models/executionContext.js";
 import { loadConfig } from "../src/config/index.js";
 
@@ -62,6 +62,14 @@ test("buildArgs keeps prompt as a single literal argv entry (no shell involved t
   const { context } = contextFor();
   const args = buildArgs(dangerous, context);
   assert.equal(args[1], dangerous); // untouched — invoke() passes argv directly, no shell parses it
+});
+
+test("buildExecOptions uses config.maxBufferBytes, not a hardcoded duplicate constant", () => {
+  const { context } = contextFor();
+  const options = buildExecOptions(context, { ...config, maxBufferBytes: 12345 });
+  assert.equal(options.maxBuffer, 12345);
+  assert.equal(options.cwd, context.workingDirectory);
+  assert.equal(options.timeout, context.timeoutMs);
 });
 
 test("shouldCleanupProcessTree only fires on win32 for an aborted or force-killed child", () => {

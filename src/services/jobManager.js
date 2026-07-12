@@ -98,11 +98,14 @@ export class JobManager {
     const controller = new AbortController();
     this.running.set(id, controller);
     const startedAt = new Date();
-    // Runtime is tracked from this single startedAt through to completion — the
-    // starting -> running transition below never resets it.
-    this._transition(id, JOB_STATUS.STARTING, { startedAt: startedAt.toISOString() });
 
     try {
+      // Runtime is tracked from this single startedAt through to completion — the
+      // starting -> running transition below never resets it. This transition is inside the
+      // try (not before it) so a store failure here is handled the same as any other job
+      // failure, instead of rejecting _run()'s promise with nothing to catch it (_drain()
+      // calls _run() without awaiting or attaching a .catch()).
+      this._transition(id, JOB_STATUS.STARTING, { startedAt: startedAt.toISOString() });
       const result = await taskFn(controller.signal, () => this._transition(id, JOB_STATUS.RUNNING));
       const finishedAt = new Date();
       this._transition(id, JOB_STATUS.COMPLETED, {
@@ -149,11 +152,17 @@ export class JobManager {
   /** Evicts the oldest terminal jobs once history exceeds maxHistory; queued/running jobs are never evicted. */
   _trimHistory() {
     const jobs = this.store.list();
-    if (jobs.length <= this.maxHistory) return;
+    let excess = jobs.length - this.maxHistory;
+    if (excess <= 0) return;
 
+    // Track the remaining count to evict instead of re-querying store.list().length (O(n))
+    // on every iteration, which was O(n^2) for a bulk eviction.
     for (const job of jobs) {
-      if (this.store.list().length <= this.maxHistory) break;
-      if (TERMINAL_STATUSES.has(job.status)) this.store.delete(job.id);
+      if (excess <= 0) break;
+      if (TERMINAL_STATUSES.has(job.status)) {
+        this.store.delete(job.id);
+        excess--;
+      }
     }
   }
 }

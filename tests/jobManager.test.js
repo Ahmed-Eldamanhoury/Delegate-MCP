@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { JobManager } from "../src/services/jobManager.js";
+import { InMemoryJobStore } from "../src/services/jobStore.js";
 import { JOB_STATUS } from "../src/models/job.js";
 import { delayTask, failTask, waitUntil } from "./testUtils.js";
 
@@ -93,6 +94,52 @@ test("a job exposes phase/progressMessage through starting -> running -> complet
   assert.equal(job.phase, "completed");
   assert.equal(job.progressMessage, "Finished successfully");
   assert.ok(job.runtimeMs >= 20);
+});
+
+test("a store failure during the starting transition surfaces as a failed job, not an unhandled rejection", async () => {
+  // The starting transition is JobManager's first store write for a job, made without anyone
+  // awaiting/catching _run()'s promise (_drain() fires it and moves on) — so if it isn't inside
+  // the same try/catch as every other transition, a throw here has nothing to catch it.
+  let calls = 0;
+  const store = new InMemoryJobStore();
+  const realUpdate = store.update.bind(store);
+  store.update = (id, patch) => {
+    calls++;
+    if (calls === 1) throw new Error("simulated store failure");
+    return realUpdate(id, patch);
+  };
+
+  const manager = new JobManager({ store, maxConcurrent: 1 });
+  const id = manager.submit(delayTask(10, "done"));
+
+  await waitUntil(() => manager.getJob(id).status === JOB_STATUS.FAILED);
+  assert.equal(manager.getJob(id).error, "simulated store failure");
+});
+
+test("_trimHistory evicts oldest terminal jobs once maxHistory is exceeded, never touching queued/running ones", async () => {
+  // maxConcurrent: 1 makes completion order deterministic (strictly sequential), which the
+  // eviction assertions below depend on.
+  const manager = new JobManager({ maxConcurrent: 1, maxHistory: 2 });
+
+  const completedIds = [];
+  for (let i = 0; i < 4; i++) {
+    completedIds.push(manager.submit(delayTask(5, `done-${i}`)));
+  }
+  await waitUntil(() => manager.getJob(completedIds[3]).status === JOB_STATUS.COMPLETED);
+
+  let remaining = manager.listJobs();
+  assert.equal(remaining.length, 2, "only maxHistory terminal jobs should be retained");
+  assert.deepEqual(remaining.map((j) => j.id), completedIds.slice(-2), "oldest terminal jobs evicted first");
+
+  // A job still in flight when the cap is already reached must never be evicted.
+  const survivorId = manager.submit(delayTask(5000, "still running"));
+  await waitUntil(() => manager.getJob(survivorId).status !== JOB_STATUS.QUEUED);
+
+  remaining = manager.listJobs();
+  assert.ok(remaining.some((j) => j.id === survivorId), "in-flight job must never be evicted");
+  assert.ok(remaining.length <= 3); // 2 retained terminal + 1 in-flight
+
+  manager.cancelJob(survivorId);
 });
 
 test("cancelling a job while it is still starting (before markRunning) aborts it", async () => {
