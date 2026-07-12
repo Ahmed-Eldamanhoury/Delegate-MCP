@@ -1,8 +1,34 @@
 # ADR-0002: Streaming & Event Architecture
 
 ## Status
-**Proposed** — design only, nothing in this document is implemented. Not yet reflected in
-`docs/FOUNDATION_FREEZE.md`; it will be, once accepted and built.
+**Accepted, amended, implemented in v1.6.0** (phases 1–2, 3 partial, 4 partial, 5 — see
+Migration plan for what shipped vs. what's deliberately deferred). See Amendment Log below
+for what changed from the original Proposed draft and why.
+
+## Amendment Log (Phase 0, this wave)
+
+1. **`RuntimeEventBus` is the contract, `EventEmitter` is one implementation of it.** The
+   original draft named `EventEmitter` directly in the architecture. That's an implementation
+   detail — a future swap to `MessageChannel`, RxJS, Redis, NATS, or RabbitMQ must not require
+   touching any publisher or subscriber. `RuntimeEventBus` is now defined as a
+   `{publish, subscribe, subscribeAll}` shape (see below); the `EventEmitter`-backed default
+   is one file, and it is the *only* file in the codebase allowed to `import "node:events"`.
+2. **`JobStarting`/`JobRunning` collapsed into `JobStateChanged`.** A state transition and a
+   progress update are different concepts (per this amendment's own instruction: "a state
+   transition is not progress"), so they get different types — but not every *individual*
+   transition needs its own type. `JobQueued`/`JobCompleted`/`JobFailed`/`JobCancelled` keep
+   distinct types because their payloads are genuinely different shapes and consumers branch
+   on them (workspace creation vs. persistence-with-result vs. persistence-with-error).
+   `starting`/`running` carry no such distinct payload — they're both "the status field
+   ticked," so both now emit one `JobStateChanged` with `{from, to}`. This is a real
+   reduction (6 lifecycle types → 4 distinct + 1 generic), not just a rename.
+3. **`StdoutReceived`/`StderrReceived` collapsed into `OutputChunk`.** Identical shape, differ
+   only by which stream — `{stream: "stdout"|"stderr", chunk, timestamp}` on one type is
+   simpler than two types a subscriber has to handle symmetrically anyway.
+4. Net effect: 12 types → 10 (`JobQueued`, `JobStateChanged`, `JobProgress`, `OutputChunk`,
+   `JobCompleted`, `JobFailed`, `JobCancelled`, `ArtifactCreated`, `WorkspaceCreated`,
+   `WorkspaceDeleted`), with zero overlap — every transition emits exactly one event type,
+   which is also what makes "no duplicate events" mechanically verifiable in tests.
 
 ## Context
 Three separate pieces of code currently push data about a job's lifecycle to three separate
@@ -30,35 +56,45 @@ pushed back on once. This ADR generalizes that into a proper publish/subscribe b
 - A failing/slow subscriber must never affect job execution (same fail-safe principle ADR-0001
   established for workspace I/O, generalized to all future consumers).
 
-## Event Bus architecture
-
-**Reuse, don't add a dependency.** Node's built-in `node:events` `EventEmitter` is the bus.
-No new package, no new abstraction layer beyond a single `src/services/eventBus.js` module
-exporting one shared instance (or a factory, for test isolation — mirrors how `JobManager`
-itself is already instantiated once in `mcpServer.js` and passed around).
+## RuntimeEventBus contract (implementation-independent)
 
 ```
-                          ┌──────────────┐
-  JobManager.submit()     │              │  subscribe   ┌────────────────────┐
-  JobManager._transition()│  Event Bus   │◄─────────────┤ workspaceManager    │
-  claudeCliService.invoke │ (EventEmitter)│◄─────────────┤ (workspace/artifact)│
-       │  emit(...)       │              │◄─────────────┤ MCP progress adapter│
-       └─────────────────►│              │◄─────────────┤ future: dashboard   │
-                          └──────────────┘◄─────────────┤ future: plugins      │
-                                                          └────────────────────┘
+RuntimeEventBus = {
+  publish(partialEvent: {type, jobId, payload}) -> RuntimeEvent   // fills eventId/timestamp/version
+  subscribe(type: string, handler: (RuntimeEvent) => void) -> unsubscribe: () => void
+  subscribeAll(handler: (RuntimeEvent) => void) -> unsubscribe: () => void
+}
 ```
 
-- **Publishers**: `JobManager` (state transitions), `claudeCliService` (stdout/stderr chunks,
-  once migrated to `spawn()` — see CLI Integration), `workspaceManager` (artifact/workspace
+This is the *only* thing any other module may depend on. `src/services/runtimeEventBus.js`
+exports `createRuntimeEventBus()`, whose default implementation happens to use `node:events`'
+`EventEmitter` internally — but the `EventEmitter` instance is closed over, never returned or
+exposed. A future implementation (`MessageChannel`, RxJS, Redis, NATS, RabbitMQ) only has to
+satisfy the three-function shape above; nothing that calls `publish`/`subscribe` needs to
+change.
+
+```
+                          ┌──────────────────┐
+  JobManager.submit()     │                  │  subscribe   ┌────────────────────┐
+  JobManager._transition()│  RuntimeEventBus │◄─────────────┤ workspaceManager    │
+  claudeCliService.invoke │ (contract; default│◄─────────────┤ MCP progress adapter│
+       │  publish(...)    │  impl: EventEmitter,│◄─────────────┤ future: dashboard   │
+       └─────────────────►│  internal only)  │◄─────────────┤ future: plugins      │
+                          └──────────────────┘                └────────────────────┘
+```
+
+- **Publishers**: `JobManager` (state transitions), `claudeCliService` (output chunks, once
+  migrated to `spawn()` — see CLI Integration), `workspaceManager` (artifact/workspace
   lifecycle).
-- **Subscribers**: `workspaceManager` (replacing today's direct calls), a new MCP-progress
-  adapter, and anything added later — none of which `JobManager` imports or knows about.
-- **Isolation**: every `bus.emit()` call site wraps subscriber dispatch so a throwing listener
-  is caught and logged, never propagates into the publisher's call stack. `EventEmitter`
-  listeners run synchronously by default; the bus wrapper is what makes this safe, not
-  `EventEmitter` itself.
+- **Subscribers**: `workspaceManager` (replacing today's direct calls — see Migration plan),
+  a new MCP-progress adapter, and anything added later — none of which `JobManager` imports
+  or knows about.
+- **Isolation**: `subscribe()`'s returned handler is individually try/catch-wrapped inside
+  `runtimeEventBus.js` — one throwing subscriber is logged and skipped, never affects sibling
+  subscribers or the publisher's call stack. This lives entirely inside the bus implementation,
+  not at each call site, so it holds regardless of which backing implementation is in use.
 - **Backpressure**: none needed for lifecycle events (low frequency, one per state
-  transition). `StdoutReceived`/`StderrReceived` are higher-frequency — flagged under Risks.
+  transition). `OutputChunk` is higher-frequency — flagged under Risks.
 
 ## Event schema (frozen by this ADR, once accepted)
 
@@ -67,7 +103,7 @@ itself is already instantiated once in `mcpServer.js` and passed around).
   "eventId": "uuid",
   "timestamp": "ISO-8601 string",
   "jobId": "uuid",
-  "type": "JobQueued | JobStarting | JobRunning | JobProgress | StdoutReceived | StderrReceived | JobCompleted | JobFailed | JobCancelled | ArtifactCreated | WorkspaceCreated | WorkspaceDeleted",
+  "type": "JobQueued | JobStateChanged | JobProgress | OutputChunk | JobCompleted | JobFailed | JobCancelled | ArtifactCreated | WorkspaceCreated | WorkspaceDeleted",
   "version": 1,
   "payload": { "...": "shape depends on type, see below" }
 }
@@ -80,11 +116,9 @@ breaking-change discipline `FOUNDATION_FREEZE.md` already applies to MCP schemas
 | Type | Payload | Emitted from |
 |---|---|---|
 | `JobQueued` | `{ tool, model, effort, metadata }` | `JobManager.submit()` |
-| `JobStarting` | `{ startedAt }` | `JobManager._transition()` |
-| `JobRunning` | `{}` | `JobManager._transition()` (on `markRunning()`) |
-| `JobProgress` | `{ phase, progressMessage }` | `JobManager._transition()`; later, parsed `stream-json` lines |
-| `StdoutReceived` | `{ chunk }` | `claudeCliService.invoke()`, post-`spawn()` migration only |
-| `StderrReceived` | `{ chunk }` | same |
+| `JobStateChanged` | `{ from, to }` — used for `queued→starting` and `starting→running` | `JobManager._transition()` |
+| `JobProgress` | `{ phase, progressMessage }`, or parsed `stream-json` content once wired | `JobManager._transition()`; `claudeCliService`, post-`stream-json` |
+| `OutputChunk` | `{ stream: "stdout"\|"stderr", chunk, timestamp }` | `claudeCliService.invoke()`, post-`spawn()` migration |
 | `JobCompleted` | `{ finishedAt, runtimeMs, exitCode, costUsd }` | `JobManager._transition()` |
 | `JobFailed` | `{ finishedAt, runtimeMs, exitCode, error }` | `JobManager._transition()` |
 | `JobCancelled` | `{ finishedAt, runtimeMs }` | `JobManager._transition()` / `cancelJob()` |
@@ -92,25 +126,29 @@ breaking-change discipline `FOUNDATION_FREEZE.md` already applies to MCP schemas
 | `ArtifactCreated` | `{ path }` | reserved — nothing populates `artifacts/` yet (ADR-0001) |
 | `WorkspaceDeleted` | `{ path, reason: "pruned" }` | `workspaceManager.pruneWorkspaces()` |
 
+Every job transition emits **exactly one** event type — there is no transition that fires
+both a specific event and a generic one, which is what makes "no duplicate events" a
+mechanically checkable test property rather than a convention.
+
 ## State transitions (unchanged state machine, now annotated with emissions)
 
 ```mermaid
 stateDiagram-v2
-  [*] --> queued: submit() / emit JobQueued
-  queued --> starting: _drain() / emit JobStarting
-  starting --> running: markRunning() / emit JobRunning
-  starting --> cancelled: abort before markRunning / emit JobCancelled
-  running --> cancelled: abort / emit JobCancelled
-  running --> completed: taskFn resolves / emit JobCompleted
-  running --> failed: taskFn rejects / emit JobFailed
-  queued --> cancelled: cancelJob() while queued / emit JobCancelled
+  [*] --> queued: submit() / publish JobQueued
+  queued --> starting: _drain() / publish JobStateChanged{queued,starting}
+  starting --> running: markRunning() / publish JobStateChanged{starting,running}
+  starting --> cancelled: abort before markRunning / publish JobCancelled
+  running --> cancelled: abort / publish JobCancelled
+  running --> completed: taskFn resolves / publish JobCompleted
+  running --> failed: taskFn rejects / publish JobFailed
+  queued --> cancelled: cancelJob() while queued / publish JobCancelled
   completed --> [*]
   failed --> [*]
   cancelled --> [*]
 ```
 
 No new states, no new transitions — `JOB_STATUS` in `models/job.js` is untouched. This ADR
-only adds an `emit()` call alongside each existing `_transition()`/`submit()` call.
+only adds a `bus.publish()` call alongside each existing `_transition()`/`submit()` call.
 
 ## Sequence diagram: delegate_submit today vs. with the Event Bus
 
@@ -125,17 +163,16 @@ sequenceDiagram
 
     Client->>Handler: delegate_submit(input)
     Handler->>JM: submit(taskFn, metadata)
-    JM->>Bus: emit(JobQueued)
-    Bus-->>WS: (nothing yet — created at submitDelegation, see below)
+    JM->>Bus: publish(JobQueued)
+    Bus-->>WS: createJobWorkspace()
     JM-->>Handler: jobId
     Handler-->>Client: {success, job_id, status}
 
     Note over JM,Bus: later, asynchronously, job runs
-    JM->>Bus: emit(JobStarting)
-    Bus-->>WS: createJobWorkspace()
+    JM->>Bus: publish(JobStateChanged: queued->starting)
     Bus-->>MCP: (no-op: no live progressToken for a submit()'d job)
-    JM->>Bus: emit(JobRunning)
-    JM->>Bus: emit(JobCompleted)
+    JM->>Bus: publish(JobStateChanged: starting->running)
+    JM->>Bus: publish(JobCompleted)
     Bus-->>WS: persistJobArtifacts(), pruneWorkspaces()
 
     Client->>Handler: delegate_status(job_id)  (polling, unchanged)
@@ -175,7 +212,7 @@ for half of this project's own tool surface; recommending pure polling would fai
 non-MCP future consumer this wave lists as a goal. The combination is the only option that
 covers both.
 
-## CLI integration: execFile → spawn migration (design, not implemented)
+## CLI integration: execFile → spawn migration (implemented in v1.6.0)
 
 **Current**: `execFile(bin, args, opts, callback)` buffers stdout/stderr fully in memory,
 delivers once on exit. `claudeCliService.invoke()`'s resolved shape
@@ -185,26 +222,42 @@ not a replacement for it.
 
 **Proposed**: `spawn(bin, args, opts)` returns a `ChildProcess` with `.stdout`/`.stderr` as
 readable streams.
-- **Incremental stdout**: `child.stdout.on('data', chunk => { buffer += chunk; bus.emit('StdoutReceived', {jobId, chunk}) })`. Final `raw` is still the fully accumulated buffer — same value `execFile` would have produced.
-- **Incremental stderr**: same pattern on `child.stderr`.
+- **Incremental stdout**: `child.stdout.on('data', chunk => { buffer += chunk; bus.publish({type: 'OutputChunk', jobId, payload: {stream: 'stdout', chunk: String(chunk), timestamp: ...}}) })`. Final `raw` is still the fully accumulated buffer — same value `execFile` would have produced.
+- **Incremental stderr**: same pattern on `child.stderr`, `stream: 'stderr'`.
 - **`stream-json`**: `claude --output-format stream-json` emits newline-delimited JSON events instead of one final JSON blob. With `spawn()`, each complete line can be parsed as it arrives and re-emitted as a richer `JobProgress` (e.g. "invoking Bash tool", "reading file X") — this is what makes `JobProgress`/`progressMessage` *live* instead of the static per-phase text `PHASE_INFO` provides today. Requires a line-buffering parser (a chunk boundary can split a JSON line mid-object) — not designed in detail here, flagged as an implementation-time risk below.
 - **Cancellation**: `spawn()` accepts the same `signal` option `execFile()` does — `AbortController`-based cancellation carries over unchanged. `shouldCleanupProcessTree()`/`killWindowsProcessTree()` (ADR: Wave 5 hardening) operate on `child.pid` and are transport-agnostic — no change needed.
 - **Process cleanup**: `spawn()` requires explicit stream teardown (`child.stdout.destroy()`, removing `'data'` listeners) on both normal exit and abort, which `execFile()` handled internally. This is new surface area for a leak if done carelessly — flagged as a risk, not solved here.
 
 ## Migration plan (phased, each phase independently shippable)
 
-1. **Event Bus core**: add `eventBus.js`, have `JobManager` emit at existing transition
-   points. Purely additive — no existing caller changes. Ships alone; nothing consumes it yet.
-2. **Rewire Workspace as a subscriber**: `workspaceManager`'s calls move from
-   `delegationService`'s direct invocation to bus subscriptions. Internal wiring change only —
-   `ADR-0001`'s public contract (`createJobWorkspace`/`persistJobArtifacts`/`pruneWorkspaces`)
-   is untouched, just *called from* a different place.
-3. **`execFile` → `spawn()` migration** in `claudeCliService`, with `StdoutReceived`/
-   `StderrReceived` emission. `invoke()`'s resolved shape unchanged (verified by existing
-   tests — `tests/claudeCliService.test.js` already pins this shape).
-4. **`stream-json` parsing** for live `JobProgress`, layered on top of phase 3.
-5. **MCP progress-notification adapter**, subscribing to the bus and forwarding to
-   `delegate_task`'s `progressToken` when present.
+1. ✅ **Shipped.** `RuntimeEventBus` core: `runtimeEventBus.js` + `models/runtimeEvent.js`,
+   `JobManager` publishes at existing transition points. Purely additive.
+2. ✅ **Shipped, partially — by design.** Terminal-side persistence (`persistJobArtifacts` +
+   `pruneWorkspaces`) moved to bus subscription (`workspaceEventBridge.js`). `createJobWorkspace()`
+   stays a **direct call** from `delegationService`, not bus-wired: it needs the unredacted
+   `ExecutionContext` (`environment`/`process.env`), which must never be duplicated into
+   `JobManager`'s job record (`job.metadata` is returned verbatim in `delegate_status`'s MCP
+   response — storing raw env vars there would leak secrets through the protocol, the exact
+   leak `ADR-0001`'s `context.json` redaction exists to prevent at the disk layer). A
+   security-motivated scope boundary found during implementation, documented in
+   `delegationService.js`'s docstring.
+3. ✅ **Shipped.** `execFile` → `spawn()` in `claudeCliService`, with `OutputChunk` emission
+   and manually re-implemented `maxBufferBytes` enforcement (`spawn` has no native equivalent
+   to `execFile`'s `maxBuffer`). 11 tests against real child processes
+   (`tests/claudeCliServiceSpawn.test.js`): success, non-zero exit with/without stdout,
+   abort, timeout-equivalent kill, maxBuffer, ENOENT, chunk publishing. `invoke()`'s resolved
+   shape unchanged (same tests, plus the pre-existing `tests/claudeCliService.test.js` pins).
+4. ✅ **Parser shipped, not activated.** `streamJsonParser.js`, unit-tested (7 tests,
+   including multi-chunk line reassembly), but **not wired into the live `--output-format`
+   argument** — switching that flag is a follow-up decision once verified against a real,
+   logged-in CLI session (this environment cannot verify it live; shipping an unverified
+   change to the argument a frozen contract depends on is not an acceptable risk).
+5. ✅ **Shipped.** MCP progress-notification adapter (`mcpProgressAdapter.js`), subscribing to
+   the bus and forwarding to `delegate_task`'s `progressToken` when present (verified API:
+   `extra._meta.progressToken` + `extra.sendNotification({method: "notifications/progress",
+   params: {progressToken, progress, message}})`). `OutputChunk` deliberately excluded from
+   forwarding (too high-frequency for a protocol channel — no production subscriber exists
+   for it yet at all).
 6. **Out of scope for this ADR, future work**: an actual Dashboard process and a plugin API —
    both are "just" new bus subscribers per this architecture, but neither is designed here.
 
@@ -215,10 +268,10 @@ diff, live end-to-end call) before the next begins.
 
 | Risk | Severity | Mitigation (design-level; implementation detail deferred) |
 |---|---|---|
-| Synchronous `EventEmitter` listener throws or blocks | Medium | Bus wrapper catches per-listener, matching ADR-0001's fail-safe I/O precedent |
-| High-frequency `StdoutReceived` floods subscribers | Medium | Coalesce/debounce at emission time; not designed in detail here |
-| `stream-json` line parsing across chunk boundaries | Medium | Line-buffering parser required; a naive per-chunk `JSON.parse` will fail intermittently |
-| `EventEmitter` max-listener warnings as subscriber count grows | Low | `setMaxListeners()` on the shared bus instance |
+| Synchronous listener throws or blocks | Medium | `runtimeEventBus.js` wraps every subscriber individually, matching ADR-0001's fail-safe I/O precedent |
+| High-frequency `OutputChunk` floods subscribers | Medium | Coalesce/debounce at emission time; not designed in detail here |
+| `stream-json` line parsing across chunk boundaries | Medium | Line-buffering parser built and unit-tested; **not activated on the live `--output-format` flag this wave** — the exact format can't be verified against a real logged-in CLI in this environment, and guessing wrong would risk the frozen `delegate_task` response shape |
+| `EventEmitter` (default impl) max-listener warnings as subscriber count grows | Low | `setMaxListeners()` on the shared internal emitter |
 | `spawn()` stream teardown omitted → listener/handle leak | Medium | Explicit cleanup in both the exit callback and the abort path |
 | Scope creep into implementing Dashboard/plugins now | Low (governance) | Explicitly out of scope; this ADR only freezes the bus + event contract |
 

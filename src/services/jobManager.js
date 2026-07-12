@@ -1,20 +1,31 @@
 import { randomUUID } from "node:crypto";
 import { JOB_STATUS, TERMINAL_STATUSES, PHASE_INFO, createJob } from "../models/job.js";
+import { EVENT_TYPES } from "../models/runtimeEvent.js";
 import { InMemoryJobStore } from "./jobStore.js";
+import { createRuntimeEventBus } from "./runtimeEventBus.js";
 
 /**
  * Runs async tasks in the background with a bounded concurrency queue, tracking each as a
  * Job. Both the synchronous `delegate_task` handler (which awaits completion) and the
  * non-blocking `delegate_submit` handler go through this same submit() — it's the single
- * source of truth for job state either way.
+ * source of truth for job state either way. Every transition also publishes a RuntimeEvent
+ * (ADR-0002) — the bus carries *notifications*, never becomes a second place state lives;
+ * a subscriber that needs full detail reconciles via getJob(id).
  */
 export class JobManager {
-  /** @param {{store?: InMemoryJobStore, maxConcurrent?: number, maxHistory?: number, logger?: object}} [opts] */
-  constructor({ store = new InMemoryJobStore(), maxConcurrent = 2, maxHistory = 500, logger } = {}) {
+  /** @param {{store?: InMemoryJobStore, maxConcurrent?: number, maxHistory?: number, logger?: object, bus?: ReturnType<typeof createRuntimeEventBus>}} [opts] */
+  constructor({
+    store = new InMemoryJobStore(),
+    maxConcurrent = 2,
+    maxHistory = 500,
+    logger,
+    bus = createRuntimeEventBus({ logger }),
+  } = {}) {
     this.store = store;
     this.maxConcurrent = maxConcurrent;
     this.maxHistory = maxHistory;
     this.logger = logger;
+    this.bus = bus;
     /** @type {{id: string, taskFn: (signal: AbortSignal, markRunning: () => void) => Promise<unknown>}[]} */
     this.pending = [];
     /** @type {Map<string, AbortController>} */
@@ -24,15 +35,22 @@ export class JobManager {
   }
 
   /**
-   * @param {(signal: AbortSignal, markRunning: () => void) => Promise<unknown>} taskFn
+   * @param {(signal: AbortSignal, markRunning: () => void, jobId: string) => Promise<unknown>} taskFn
    *   `markRunning` should be called once real execution has actually begun (e.g. the
-   *   subprocess spawned) to advance the job from "starting" to "running".
+   *   subprocess spawned) to advance the job from "starting" to "running". `jobId` is this
+   *   job's own id — passed at call time (not construction time) since taskFn is built before
+   *   submit() has generated it; used e.g. to tag OutputChunk events with the right jobId.
    * @param {Record<string, unknown>} [metadata]
    * @returns {string} job id
    */
   submit(taskFn, metadata = {}) {
     const id = randomUUID();
     this.store.create(createJob(id, metadata));
+    this.bus.publish({
+      type: EVENT_TYPES.JOB_QUEUED,
+      jobId: id,
+      payload: { tool: metadata.tool ?? null, model: metadata.model ?? null, effort: metadata.effort ?? null, metadata },
+    });
     this.pending.push({ id, taskFn });
     this._drain();
     return id;
@@ -106,7 +124,7 @@ export class JobManager {
       // failure, instead of rejecting _run()'s promise with nothing to catch it (_drain()
       // calls _run() without awaiting or attaching a .catch()).
       this._transition(id, JOB_STATUS.STARTING, { startedAt: startedAt.toISOString() });
-      const result = await taskFn(controller.signal, () => this._transition(id, JOB_STATUS.RUNNING));
+      const result = await taskFn(controller.signal, () => this._transition(id, JOB_STATUS.RUNNING), id);
       const finishedAt = new Date();
       this._transition(id, JOB_STATUS.COMPLETED, {
         finishedAt: finishedAt.toISOString(),
@@ -134,9 +152,55 @@ export class JobManager {
     }
   }
 
-  /** Applies a status transition plus its static phase/progressMessage metadata. */
+  /** Applies a status transition, its static phase/progressMessage metadata, and publishes exactly one RuntimeEvent. */
   _transition(id, status, extra = {}) {
+    const before = this.store.get(id);
+    const from = before?.status;
     this.store.update(id, { status, ...PHASE_INFO[status], ...extra });
+    this._publishTransitionEvent(id, from, status, extra);
+  }
+
+  /**
+   * queued->starting and starting->running carry no distinct payload, so both publish one
+   * generic JobStateChanged{from,to} (ADR-0002 amendment). completed/failed/cancelled keep
+   * distinct types since their payloads genuinely differ and subscribers branch on them.
+   * Every call site publishes exactly one event — never both a specific and a generic one.
+   */
+  _publishTransitionEvent(id, from, to, extra) {
+    switch (to) {
+      case JOB_STATUS.STARTING:
+      case JOB_STATUS.RUNNING:
+        this.bus.publish({ type: EVENT_TYPES.JOB_STATE_CHANGED, jobId: id, payload: { from, to } });
+        return;
+      case JOB_STATUS.COMPLETED:
+        this.bus.publish({
+          type: EVENT_TYPES.JOB_COMPLETED,
+          jobId: id,
+          payload: {
+            finishedAt: extra.finishedAt,
+            runtimeMs: extra.runtimeMs,
+            exitCode: extra.exitCode,
+            costUsd: extra.result?.parsed?.total_cost_usd ?? null,
+          },
+        });
+        return;
+      case JOB_STATUS.FAILED:
+        this.bus.publish({
+          type: EVENT_TYPES.JOB_FAILED,
+          jobId: id,
+          payload: { finishedAt: extra.finishedAt, runtimeMs: extra.runtimeMs, exitCode: extra.exitCode, error: extra.error },
+        });
+        return;
+      case JOB_STATUS.CANCELLED:
+        this.bus.publish({
+          type: EVENT_TYPES.JOB_CANCELLED,
+          jobId: id,
+          payload: { finishedAt: extra.finishedAt, runtimeMs: extra.runtimeMs },
+        });
+        return;
+      default:
+        return; // QUEUED is published directly from submit(), never via _transition()
+    }
   }
 
   _settle(id) {

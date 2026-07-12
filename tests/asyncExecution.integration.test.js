@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { JobManager } from "../src/services/jobManager.js";
 import { loadConfig } from "../src/config/index.js";
 import { getWorkspaceRoot } from "../src/services/workspaceManager.js";
+import { wireWorkspaceToEventBus } from "../src/services/workspaceEventBridge.js";
 import { createDelegateTaskHandler } from "../src/handlers/delegateTaskHandler.js";
 import { createDelegateSubmitHandler } from "../src/handlers/delegateSubmitHandler.js";
 import { createDelegateStatusHandler } from "../src/handlers/delegateStatusHandler.js";
@@ -13,9 +14,9 @@ import { createDelegateHistoryHandler } from "../src/handlers/delegateHistoryHan
 import { createDelegateCancelHandler } from "../src/handlers/delegateCancelHandler.js";
 import { waitUntil } from "./testUtils.js";
 
-// Handlers go through the real delegationService -> workspaceManager (not stubbed) so these
-// tests also exercise real disk I/O — but isolated to a temp dir, never the project's own
-// workspace/ directory.
+// Handlers go through the real delegationService -> RuntimeEventBus -> workspaceManager (not
+// stubbed) so these tests also exercise real disk I/O — but isolated to a temp dir, never the
+// project's own workspace/ directory.
 const tempWorkspaceRoot = mkdtempSync(join(tmpdir(), "claude-delegate-test-"));
 after(() => rmSync(tempWorkspaceRoot, { recursive: true, force: true }));
 
@@ -60,6 +61,9 @@ function baseInput(overrides = {}) {
 }
 
 function buildHandlers(jobManager, service) {
+  // Workspace persistence is a bus subscriber now (ADR-0002 Phase 4) — mcpServer.js wires
+  // this in production; tests must wire it explicitly for each JobManager they construct.
+  wireWorkspaceToEventBus({ bus: jobManager.bus, jobManager, config, logger });
   return {
     task: createDelegateTaskHandler({ config, logger, jobManager, service }),
     submit: createDelegateSubmitHandler({ config, logger, jobManager, service }),
@@ -98,6 +102,38 @@ test("delegate_task still blocks until completion, with an unchanged response sh
   assert.equal(response.isError, false);
   assert.equal(response.content[0].text, "[model=sonnet cost=$0.02 turns=1]\nstub ok");
   assert.equal(response.structuredContent.result, "stub ok");
+});
+
+test("delegate_task forwards progress notifications when the caller supplies a progressToken", async () => {
+  const jobManager = new JobManager({ maxConcurrent: 1 });
+  const { task } = buildHandlers(jobManager, makeStubService({ delayMs: 15 }));
+
+  const notifications = [];
+  const extra = {
+    _meta: { progressToken: "tok-abc" },
+    sendNotification: async (n) => notifications.push(n),
+  };
+
+  const response = await task(baseInput(), extra);
+
+  assert.equal(response.isError, false);
+  // Note: submit() can drive a job synchronously through starting->running before this
+  // subscription (set up just after, since it needs the jobId submit() returns) exists to
+  // catch it — same characteristic Sprint 2 documented for delegate_submit's status. The
+  // terminal event always fires later (the stub's setTimeout), so it's always caught.
+  assert.ok(notifications.length >= 1, "expected at least the terminal notification");
+  assert.ok(notifications.every((n) => n.params.progressToken === "tok-abc"));
+  assert.ok(notifications.every((n) => n.method === "notifications/progress"));
+  assert.equal(notifications.at(-1).params.message, "Job completed");
+});
+
+test("delegate_task without a progressToken sends no notifications and behaves identically", async () => {
+  const jobManager = new JobManager({ maxConcurrent: 1 });
+  const { task } = buildHandlers(jobManager, makeStubService({ delayMs: 10 }));
+
+  const response = await task(baseInput()); // no `extra` at all — matches real callers that don't request progress
+  assert.equal(response.isError, false);
+  assert.equal(response.content[0].text, "[model=sonnet cost=$0.02 turns=1]\nstub ok");
 });
 
 test("delegate_task falls back to raw text when the CLI output isn't JSON", async () => {
@@ -261,6 +297,7 @@ test("workspace: concurrent jobs each get their own isolated workspace directory
 test("workspace: pruneWorkspaces keeps disk usage bounded across many completed jobs", async () => {
   const jobManager = new JobManager({ maxConcurrent: 2 });
   const boundedConfig = { ...config, maxWorkspaceHistory: 3 };
+  wireWorkspaceToEventBus({ bus: jobManager.bus, jobManager, config: boundedConfig, logger });
   const task = createDelegateTaskHandler({
     config: boundedConfig,
     logger,
@@ -272,8 +309,8 @@ test("workspace: pruneWorkspaces keeps disk usage bounded across many completed 
     await task(baseInput({ prompt: `bounded ${i}` }));
   }
 
-  // The workspace persist+prune chain is a separate fire-and-forget waiter on each job (see
-  // delegationService.js) from delegate_task's own await — poll rather than assume ordering.
+  // Workspace persistence reacts to the job's terminal bus event (workspaceEventBridge.js),
+  // a separate subscriber from delegate_task's own await — poll rather than assume ordering.
   const jobsDir = getWorkspaceRoot(boundedConfig);
   const { readdirSync } = await import("node:fs");
   await waitUntil(() => existsSync(jobsDir) && readdirSync(jobsDir).length <= 3);

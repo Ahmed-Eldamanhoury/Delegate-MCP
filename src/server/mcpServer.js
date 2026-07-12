@@ -3,6 +3,8 @@ import { z } from "zod";
 import { DelegateTaskInputShape } from "../models/schemas.js";
 import { JOB_STATUS } from "../models/job.js";
 import { JobManager } from "../services/jobManager.js";
+import { createRuntimeEventBus } from "../services/runtimeEventBus.js";
+import { wireWorkspaceToEventBus } from "../services/workspaceEventBridge.js";
 import { createDelegateTaskHandler } from "../handlers/delegateTaskHandler.js";
 import { createDelegateSubmitHandler } from "../handlers/delegateSubmitHandler.js";
 import { createDelegateStatusHandler } from "../handlers/delegateStatusHandler.js";
@@ -32,11 +34,18 @@ const JOB_ID_FIELD = z
  */
 export function createMcpServer({ config, logger, version }) {
   const server = new McpServer({ name: "claude-delegate", version });
+  const bus = createRuntimeEventBus({ logger });
   const jobManager = new JobManager({
     maxConcurrent: config.maxConcurrentJobs,
     maxHistory: config.maxJobHistory,
     logger,
+    bus,
   });
+  // ADR-0002 Phase 4: Workspace is a bus subscriber, not a direct call from delegationService
+  // (except createJobWorkspace — see delegationService.js for why). Extension point for
+  // future consumers (History/Dashboard/plugins): subscribe to the same `bus` instance;
+  // nothing here needs to change for them to hook in.
+  wireWorkspaceToEventBus({ bus, jobManager, config, logger });
 
   server.registerTool(
     "delegate_task",

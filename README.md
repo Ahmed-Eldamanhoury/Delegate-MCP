@@ -148,10 +148,26 @@ it verbatim to disk would leak secrets. See
 for the full design and [docs/FOUNDATION_FREEZE.md](docs/FOUNDATION_FREEZE.md) for what's
 contractually frozen across this project.
 
+## Events & progress (RuntimeEventBus)
+
+Every job's lifecycle (queued/starting/running/completed/failed/cancelled) and CLI output
+chunks are published on an in-process `RuntimeEventBus` — a `{publish, subscribe,
+subscribeAll}` contract (default implementation: `node:events`, but that's an internal
+detail; nothing else in the codebase imports it directly). Workspace persistence and the MCP
+progress adapter are both bus subscribers, wired in `mcpServer.js`. Full event schema,
+sequence diagrams, and the streaming-strategy rationale are in
+[docs/adr/ADR-0002-streaming-and-event-architecture.md](docs/adr/ADR-0002-streaming-and-event-architecture.md).
+
+If you call `delegate_task` with a progress token (`_meta.progressToken`, per the MCP spec),
+you'll receive `notifications/progress` pushes for the job's lifecycle while the call is
+in flight. `delegate_submit` cannot do this — by the time anything happens, its tool call has
+already returned; keep polling `delegate_status`/`delegate_history` for that path (this is a
+protocol constraint, not a missing feature — see the ADR).
+
 ## Security note
 
 `prompt` is arbitrary text (it may ultimately come from web content an orchestrating model
-read). The CLI is spawned with `execFile`, no shell, directly against `claude.exe` — so
+read). The CLI is spawned with `spawn`, no shell, directly against `claude.exe` — so
 `prompt` is passed as one literal argv entry and is never parsed for shell metacharacters
 (`&`, `|`, `` ` ``, etc.), regardless of what it contains. Do not change `CLAUDE_DELEGATE_BIN`
 to point at the `.cmd`/`.bat` shim or add `shell: true` back into `claudeCliService.js` —

@@ -10,14 +10,19 @@ src/
   server/health.js        non-blocking check that the configured claude binary exists
   handlers/                one file per tool: MCP-shaped request/response formatting
   services/delegationService.js  shared submit path: builds an ExecutionContext, calls jobManager.submit(),
-                                    triggers workspace create/persist/prune (fire-and-forget)
-  services/claudeCliService.js   pure arg-building + child_process spawn/parse (the actual CLI delegation)
+                                    creates the job's workspace directly (see Workspace section for why)
+  services/claudeCliService.js   arg-building + spawn()-based CLI delegation, OutputChunk emission
   services/jobManager.js  background task runner: queueing, concurrency, cancellation, lifecycle, progress
   services/jobStore.js     storage interface for Job records (in-memory today, swappable)
+  services/runtimeEventBus.js  RuntimeEventBus contract + default (EventEmitter) implementation
   services/workspaceManager.js  per-job on-disk artifact mirror (metadata/context/stdout/stderr/result)
+  services/workspaceEventBridge.js  subscribes workspace's terminal-side persistence to the bus
+  services/mcpProgressAdapter.js  forwards a job's bus events as MCP notifications/progress
+  services/streamJsonParser.js  incremental stream-json line parser (built, not yet wired live)
   models/schemas.js       zod input schema for delegate_task/delegate_submit (the public tool contract)
   models/executionContext.js  ExecutionContext shape + factory — the CLI service's only input besides prompt
   models/job.js            Job shape, status enum, phase/progress metadata, summarizeJob()/toJobView()
+  models/runtimeEvent.js  EVENT_TYPES enum + RuntimeEvent shape (ADR-0002)
   config/                 env-driven config loading + version constant
   validation/              startup config sanity checks
   logging/logger.js       structured JSON logs to stderr (stdout is reserved for MCP protocol frames)
@@ -108,21 +113,36 @@ default 2), tracking each as a `Job` (`models/job.js`).
   `delegate_task` stay synchronous while still going through the same job system as
   `delegate_submit`.
 
+## RuntimeEventBus & events
+
+See [ADR-0002](adr/ADR-0002-streaming-and-event-architecture.md) for the full design,
+event schema, and streaming-strategy rationale. Summary: `RuntimeEventBus` is a
+`{publish, subscribe, subscribeAll}` contract (`services/runtimeEventBus.js`) — its default
+implementation happens to use `node:events`, but that import is confined to that one file.
+`JobManager` owns one shared `bus` instance (constructor-injected, defaulted if not given)
+and publishes a `RuntimeEvent` at every state transition; `claudeCliService.invoke()`
+publishes `OutputChunk` as stdout/stderr arrive. Subscribers (workspace persistence, the MCP
+progress adapter, and any future consumer) never touch `JobManager` or `claudeCliService`
+directly — they just subscribe to the bus `mcpServer.js` wires up once at boot.
+
 ## Workspace (persistence layer)
 
-See [ADR-0001](adr/ADR-0001-workspace-and-artifact-architecture.md) for the full design.
-Summary: `delegationService.submitDelegation()` calls `workspaceManager.createJobWorkspace()`
-right after `jobManager.submit()` (writes `context.json` + an empty `artifacts/`), then
-attaches a fire-and-forget `jobManager.waitForCompletion(jobId).then(...)` that calls
-`persistJobArtifacts()` (writes `metadata.json`/`stdout.log`/`stderr.log`/`result.json`) and
-`pruneWorkspaces()`. This works because `JobManager.waitForCompletion()` already supports
-multiple independent waiters per job id — `delegate_task`'s own `await
-waitForCompletion(jobId)` and this fire-and-forget one don't interfere. The workspace is a
-write-once mirror taken at settle time, never a second source of truth for job state.
+See [ADR-0001](adr/ADR-0001-workspace-and-artifact-architecture.md) for the original design.
+As of ADR-0002, terminal-side persistence is bus-driven: `workspaceEventBridge.js` subscribes
+to `JobCompleted`/`JobFailed`/`JobCancelled`, refetches the full `Job` via
+`jobManager.getJob(id)`, and calls `persistJobArtifacts()` + `pruneWorkspaces()`.
+`createJobWorkspace()` (which writes `context.json`) is the one piece still called *directly*
+from `delegationService.submitDelegation()`, not via the bus — deliberately: it needs the
+unredacted `ExecutionContext` (including `environment`/`process.env`), which must never be
+duplicated into `JobManager`'s job record, since `job.metadata` is returned verbatim in
+`delegate_status`'s MCP response. Storing raw env vars there would leak secrets through the
+protocol — the same class of leak `context.json`'s own redaction prevents at the disk layer.
+The workspace remains a write-once mirror taken at settle time, never a second source of
+truth for job state.
 
 ## Security: no shell in the CLI spawn
 
-`claudeCliService.invoke()` spawns `config.claudeBin` directly via `execFile` with no shell.
+`claudeCliService.invoke()` spawns `config.claudeBin` directly via `spawn()` with no shell.
 `config.claudeBin` must point at the real `claude.exe`, not the `.cmd`/`.bat` shim — spawning
 a shim requires a shell (`shell: true`), and `prompt` is arbitrary, caller-controlled text
 that a shell would parse for metacharacters (`&`, `|`, `` ` ``, etc.), which is a command
@@ -137,6 +157,15 @@ Bash tool call still running when the job was cancelled) — that child would ot
 orphaned. `claudeCliService.js`'s `shouldCleanupProcessTree()` decides when this applies
 (win32 + aborted/force-killed), and `invoke()` runs a best-effort `taskkill /t /f` on the
 whole tree in that case.
+
+## Security: buffer growth protection
+
+`execFile()` enforced `maxBuffer` natively; `spawn()` has no equivalent option, so
+`claudeCliService.spawnAndCollect()` re-implements it manually — stdout/stderr accumulation
+is checked against `config.maxBufferBytes` on every chunk, and the child is killed the moment
+either stream exceeds it (verified in `tests/claudeCliServiceSpawn.test.js`). Losing this
+during the `execFile` → `spawn` migration would have been a real regression, not just a
+missing nice-to-have.
 
 ## Input validation
 

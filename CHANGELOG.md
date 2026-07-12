@@ -1,5 +1,69 @@
 # Changelog
 
+## [1.6.0] - 2026-07-13
+
+RuntimeEventBus & Streaming Foundation
+([ADR-0002](docs/adr/ADR-0002-streaming-and-event-architecture.md), amended in this wave —
+see its Amendment Log).
+
+### Added
+- **`RuntimeEventBus`** (`src/services/runtimeEventBus.js`): implementation-independent
+  `{publish, subscribe, subscribeAll}` contract; default backed by `node:events`, but that
+  import is confined to this one file — no other module depends on `EventEmitter` directly.
+  Per-listener isolation (a throwing subscriber is logged and skipped, never affects siblings
+  or the publisher).
+- **10 event types** (`src/models/runtimeEvent.js`): `JobQueued`, `JobStateChanged` (replaces
+  the originally-proposed `JobStarting`/`JobRunning` — a state transition isn't progress, but
+  `starting`/`running` don't need distinct types either, since neither carries a distinct
+  payload), `JobProgress`, `OutputChunk` (replaces `StdoutReceived`/`StderrReceived` — same
+  shape, differ only by a `stream` field), `JobCompleted`, `JobFailed`, `JobCancelled`,
+  `ArtifactCreated`, `WorkspaceCreated`, `WorkspaceDeleted`. Every transition publishes
+  exactly one event type — mechanically verifiable "no duplicate events" (see tests).
+- **`JobManager`** now publishes a `RuntimeEvent` at every transition (`bus` is
+  constructor-injected, defaulted if not given — fully backward compatible with every
+  existing test construction).
+- **`execFile` → `spawn()` migration** in `claudeCliService`: incremental stdout/stderr via
+  `OutputChunk` events, manually re-implemented `maxBufferBytes` enforcement (spawn has no
+  native `maxBuffer`), preserved `invoke()`'s resolved shape and error semantics exactly.
+  Transport mechanics extracted into a new `spawnAndCollect()`, decoupled from
+  claude-specific `buildArgs()` — this is what made it possible to test real `spawn()`
+  behavior (abort, timeout-equivalent kill, maxBuffer, ENOENT) against `node` itself instead
+  of only through stubs.
+- **`streamJsonParser.js`**: incremental newline-delimited JSON parser for
+  `stream-json`, built and unit-tested (multi-chunk line reassembly, malformed-line handling)
+  but **not wired into the live `--output-format` argument** — see Deferred below.
+- **Workspace is now bus-driven** (`workspaceEventBridge.js`): terminal-side persistence
+  (`persistJobArtifacts`/`pruneWorkspaces`) subscribes to `JobCompleted`/`JobFailed`/
+  `JobCancelled` instead of being called directly from `delegationService`.
+- **MCP progress notifications** (`mcpProgressAdapter.js`): `delegate_task` forwards its
+  job's lifecycle events as `notifications/progress` when the caller supplies
+  `_meta.progressToken` (verified against the installed MCP SDK's actual API). Purely
+  additive — a caller that doesn't request progress sees no behavior change.
+- 43 new tests: 6 new files (`runtimeEventBus`, `jobManagerEvents` — ordering/no-duplicates/
+  concurrency, `streamJsonParser`, `claudeCliServiceSpawn` — 11 tests against real child
+  processes, `workspaceEventBridge`, `mcpProgressAdapter`) plus 2 new cases in the existing
+  integration suite (progress-notification forwarding, with/without a `progressToken`).
+  Total: 85 tests, up from 42.
+
+### Deliberately deferred (see ADR-0002 for full reasoning)
+- `stream-json` is not the live `--output-format` — the parser is built and tested, but
+  switching the argument a frozen response shape depends on isn't verifiable against a real,
+  logged-in CLI session in this environment, and an unverified guess isn't an acceptable risk.
+- `createJobWorkspace()` stays a direct call, not bus-wired — a **security-motivated**
+  boundary: it needs the unredacted `ExecutionContext` (`environment`/`process.env`), which
+  must never be duplicated into `JobManager`'s job record (`job.metadata` is returned
+  verbatim in `delegate_status`'s MCP response).
+- `OutputChunk` is not forwarded to MCP progress notifications — too high-frequency for a
+  protocol channel; no production subscriber for it exists yet at all.
+- Dashboard and plugin consumers: explicitly out of scope, "just" future bus subscribers.
+
+### Compatibility
+Zero change to any MCP tool schema — all 6 tools re-verified byte-identical via Inspector
+against the pre-wave snapshot. `delegate_task`/`delegate_submit` response shapes unchanged.
+Live end-to-end run against the real `claude.exe` confirmed the full pipeline (spawn,
+OutputChunk, workspace persistence, stderr capture) still works correctly. 85 tests total,
+all passing.
+
 ## [1.5.0] - 2026-07-13
 
 Foundation Freeze certified ([docs/FOUNDATION_FREEZE.md](docs/FOUNDATION_FREEZE.md)) plus the
