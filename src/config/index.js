@@ -4,10 +4,14 @@ import { join, dirname } from "node:path";
 // The real executable, not the claude.cmd shim — spawning it directly needs no shell,
 // which is what keeps arbitrary `prompt` text from ever being interpreted by cmd.exe.
 // Derived from %APPDATA% (npm's default global install root on Windows) rather than a
-// hardcoded path, so this resolves correctly for whichever machine/user runs it.
+// hardcoded path, so this resolves correctly for whichever machine/user runs it. %APPDATA%
+// only exists on Windows — elsewhere, fall back to the bare command name (PATH-resolved).
+// The .cmd-shim/shell risk this whole file exists to avoid is Windows-specific: non-Windows
+// npm global shims are plain executable scripts, so spawning "claude" via PATH lookup here
+// never needs shell:true the way a Windows .cmd shim would.
 const DEFAULT_BIN = process.env.APPDATA
   ? join(process.env.APPDATA, "npm", "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe")
-  : "";
+  : "claude";
 
 const PROJECT_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKSPACE_ROOT = join(PROJECT_ROOT, "workspace");

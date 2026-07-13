@@ -313,7 +313,9 @@ test("workspace: pruneWorkspaces keeps disk usage bounded across many completed 
   // a separate subscriber from delegate_task's own await — poll rather than assume ordering.
   const jobsDir = getWorkspaceRoot(boundedConfig);
   const { readdirSync } = await import("node:fs");
-  await waitUntil(() => existsSync(jobsDir) && readdirSync(jobsDir).length <= 3);
+  // Default 2000ms timeout was observed to be too tight on a shared/CI runner (real disk I/O
+  // across 6 job workspace dirs plus pruning) even though it's ample on a local machine.
+  await waitUntil(() => existsSync(jobsDir) && readdirSync(jobsDir).length <= 3, { timeoutMs: 8000 });
 
   const remaining = readdirSync(jobsDir);
   assert.ok(remaining.length <= 3, `expected at most 3 workspaces retained, found ${remaining.length}`);
