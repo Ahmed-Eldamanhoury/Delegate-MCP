@@ -1,5 +1,33 @@
 # Changelog
 
+## [2.0.0] - 2026-07-13
+
+Official "v1.0.0" release milestone — release engineering only, no functional change.
+
+### Versioning note
+This wave's release engineering spec refers to it as "v1.0.0" (the first official/certified
+release milestone — see
+[docs/releases/RELEASE_NOTES_v1.0.0.md](docs/releases/RELEASE_NOTES_v1.0.0.md)). Because
+`package.json` had already reached 1.9.0 through this project's prior wave-by-wave versioning,
+setting it literally to `1.0.0` would be a semver regression against that existing history.
+Bumping forward to **2.0.0** instead preserves strict version ordering while still marking
+this as a major, deliberate milestone. "v1.0.0" throughout `docs/releases/` is the *milestone
+name*; `2.0.0` is the actual `package.json`/npm-semver version. There is no functional
+difference between v1.9.0 and v2.0.0 — this bump is release-engineering/documentation only.
+
+### Added
+- `docs/releases/` — `RELEASE_NOTES_v1.0.0.md`, `MIGRATION_GUIDE.md`, `SUPPORTED_FEATURES.md`,
+  `KNOWN_LIMITATIONS.md`, `ROADMAP_v1.1.md`.
+- `docs/RELEASE_CHECKLIST.md`.
+- Root `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md` (previously missing), scoped
+  honestly to this being a private, single-maintainer, no-remote repository rather than
+  generic open-source boilerplate.
+
+### Compatibility
+Zero MCP schema change — all 6 tools re-verified byte-identical via Inspector. No production
+source file changed in this wave (release engineering only; the one certification-report-
+documented defect from the prior wave was already fixed then, not here).
+
 ## [1.9.0] - 2026-07-13
 
 Observability Platform, Phase 2 — final capability wave before v1.0
