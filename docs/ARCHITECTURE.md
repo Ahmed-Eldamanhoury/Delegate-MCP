@@ -18,7 +18,7 @@ src/
   services/workspaceManager.js  per-job on-disk artifact mirror (metadata/context/stdout/stderr/result)
   services/workspaceEventBridge.js  subscribes workspace's terminal-side persistence to the bus
   services/mcpProgressAdapter.js  forwards a job's bus events as MCP notifications/progress
-  services/streamJsonParser.js  incremental stream-json line parser (built, not yet wired live)
+  services/streamJsonParser.js  incremental stream-json line parser (pure, reused by claudeCliService's tracker)
   models/schemas.js       zod input schema for delegate_task/delegate_submit (the public tool contract)
   models/executionContext.js  ExecutionContext shape + factory — the CLI service's only input besides prompt
   models/job.js            Job shape, status enum, phase/progress metadata, summarizeJob()/toJobView()
@@ -79,9 +79,10 @@ queued ──> starting ──> running ──> completed
 
 Every job also carries a `phase` and `progressMessage` field mirroring the status above
 (`"queued"`/`"Waiting in queue"`, `"starting"`/`"Spawning claude CLI subprocess"`,
-`"executing"`/`"Executing claude CLI"`, etc.) — fixed per-phase text, not live streaming.
-They exist so a future incremental-progress feature has a field to update without a schema
-change; nothing currently updates `progressMessage` mid-phase.
+`"executing"`/`"Executing claude CLI"`, etc.) for the STARTING/QUEUED/terminal transitions.
+While a job is actually running, `progressMessage` is now live (v1.7.0) — see "Streaming
+(stream-json)" below — reflecting real `stream-json` content (`"Thinking… (~N tokens)"`, then
+the response text) via `JobProgress` events, not the static per-phase placeholder text.
 
 `runtimeMs` is "tracked continuously" in the sense that a client polling `delegate_status`
 mid-run sees live elapsed time (`models/job.js`'s `deriveRuntimeMs()` computes
@@ -124,6 +125,22 @@ and publishes a `RuntimeEvent` at every state transition; `claudeCliService.invo
 publishes `OutputChunk` as stdout/stderr arrive. Subscribers (workspace persistence, the MCP
 progress adapter, and any future consumer) never touch `JobManager` or `claudeCliService`
 directly — they just subscribe to the bus `mcpServer.js` wires up once at boot.
+
+## Streaming (stream-json)
+
+Activated in v1.7.0 after real protocol capture — see [ADR-0002](adr/ADR-0002-streaming-and-event-architecture.md#observed-protocol-v170--real-captures-not-assumptions)
+for the full evidence. `buildArgs()` always passes `--output-format stream-json --verbose`
+(the latter is required by the CLI itself). `claudeCliService.js`'s
+`createStreamJsonTracker()` consumes stdout chunks incrementally via
+`streamJsonParser.js`'s pure line-buffering parser, and:
+- Captures the terminal `type:"result"` line (confirmed field-for-field identical to the old
+  non-streaming `json` format) to reconstruct `raw` for `parseResult()` — `delegate_task`'s
+  response shape is unaffected by the transport change.
+- Publishes `JobProgress` only for `system/thinking_tokens` and `assistant` events carrying a
+  `text` content block — the two categories a real capture confirmed both exist and are
+  useful. Everything else (hook/session bookkeeping, rate-limit telemetry, the model's raw
+  `thinking` content, and any unrecognized future shape like `tool_use`) is silently skipped,
+  never guessed at.
 
 ## Workspace (persistence layer)
 

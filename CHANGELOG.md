@@ -1,5 +1,47 @@
 # Changelog
 
+## [1.7.0] - 2026-07-13
+
+Streaming Activation & Protocol Validation
+([ADR-0002](docs/adr/ADR-0002-streaming-and-event-architecture.md#observed-protocol-v170--real-captures-not-assumptions) —
+"Observed protocol" section).
+
+### Added
+- **Real protocol capture**: two live `claude -p --output-format stream-json --verbose`
+  captures (one auth-failure path, one successful task on a real account) used to validate
+  ADR-0002's assumptions before activating anything. Key finding: the terminal `type:"result"`
+  line is field-for-field identical to the old non-streaming `--output-format json` output —
+  confirmed, not assumed, in both captures.
+- **`--output-format stream-json --verbose` is now `buildArgs()`'s default.** (`--verbose` is
+  required by the CLI itself when streaming — discovered via a real error message.)
+- **`createStreamJsonTracker()`** (`claudeCliService.js`): incrementally parses stdout via
+  `streamJsonParser.js`, captures the terminal result line to reconstruct `raw` for
+  `parseResult()` (gracefully falls back to `parsed: null` if none was ever seen), and
+  publishes real `JobProgress` for the two categories a capture confirmed both exist and are
+  useful: `system/thinking_tokens` (live token-count ticks during extended thinking) and
+  `assistant` events carrying a `text` content block. Deliberately does not surface hook/
+  session bookkeeping, rate-limit telemetry, or the model's raw `thinking` content.
+- 10 new tests (`tests/claudeCliServiceStreamJson.test.js`) using the real observed line
+  shapes: progress-per-category, silence for non-progress types, malformed-line recovery,
+  chunk-boundary reassembly, concurrent-job isolation, standalone (no-bus) safety.
+- **Live end-to-end verification**: a real `delegate_task` call produced 17 genuine
+  `notifications/progress` pushes (`"Job running"` → 15× `"Thinking… (~N tokens)"` → the
+  actual response text → `"Job completed"`) while returning a response byte-compatible with
+  the pre-streaming format.
+
+### Also observed (documented, not acted on)
+- `result.subtype` can be `"error_max_budget_usd"` with an `errors: [...]` array — the CLI's
+  own cost tracking can spend slightly over `max_budget_usd` before stopping. Pre-existing
+  CLI behavior, not a regression from this change; noted in the ADR's risk table.
+- Not yet observed: `tool_use`/`tool_result` content blocks, multi-turn behavior. The tracker
+  only branches on confirmed shapes — anything else is silently skipped, never guessed at.
+
+### Compatibility
+Zero MCP schema change — all 6 tools re-verified byte-identical via Inspector. `delegate_task`
+response shape verified twice: once via the full test suite (95/95 passing), once live
+against the real CLI. `RuntimeEventBus` contract, `FOUNDATION_FREEZE.md`, and `JobManager`'s
+public methods untouched.
+
 ## [1.6.0] - 2026-07-13
 
 RuntimeEventBus & Streaming Foundation

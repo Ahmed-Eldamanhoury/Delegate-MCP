@@ -3,7 +3,55 @@
 ## Status
 **Accepted, amended, implemented in v1.6.0** (phases 1–2, 3 partial, 4 partial, 5 — see
 Migration plan for what shipped vs. what's deliberately deferred). See Amendment Log below
-for what changed from the original Proposed draft and why.
+for what changed from the original Proposed draft and why. **Streaming activated in v1.7.0**
+(see "Observed protocol" below) — `stream-json` is now the live default, not just a built
+parser waiting on verification.
+
+## Observed protocol (v1.7.0 — real captures, not assumptions)
+
+Two real `claude -p --output-format stream-json --verbose --no-session-persistence` captures
+(one auth-failure path, one successful task: "What is 2+2? Answer in one word.", haiku, real
+account) were used to validate this ADR's assumptions before activating the parser. Full raw
+captures are in this session's history; summarized here.
+
+**CLI constraint discovered**: `--output-format stream-json` errors ("requires --verbose")
+unless `--verbose` is also passed. `buildArgs()` now always includes both together.
+
+**Envelope**: every stdout line is one JSON object with a `type` field. Observed:
+- `system` — subtypes `hook_started`, `hook_response` (SessionStart hook bookkeeping, fires
+  before any task content — noise from this machine's configured hooks, not task progress),
+  `init` (one per session; field set includes `capabilities` which varied between the two
+  captures — not all `init` fields are stable/guaranteed), and **`thinking_tokens`**
+  (`{estimated_tokens, estimated_tokens_delta}`) — fires repeatedly (15 times in the real
+  successful capture) during extended thinking, a genuine live progress signal not
+  anticipated in the original design.
+- `assistant` — **one line per content block, not one line per turn.** The real capture
+  showed two `assistant` lines sharing the same `message.id`/`request_id`: one with a
+  `thinking` content block, one with a `text` content block. A parser must not assume one
+  line = one complete message.
+- `rate_limit_event` — quota/rate-limit telemetry (`{status, resetsAt, rateLimitType, ...}`),
+  unrelated to task progress.
+- `result` — terminal, exactly one per invocation, **always last**. Confirmed **field-for-field
+  identical** to the previous non-streaming `--output-format json` single output, in both the
+  error-path capture (`is_error: true`, synthetic model, `error: "authentication_failed"` on
+  the assistant event) and the success-path capture (`is_error: false`, real
+  `total_cost_usd`/`usage`/`modelUsage`, `result: "Four."`). This was the load-bearing
+  compatibility question for activating streaming without breaking `delegate_task`'s frozen
+  response shape — directly confirmed, not assumed.
+
+**Error markers**: an `assistant` event can carry a top-level `error` field (e.g.
+`"authentication_failed"`) separate from the terminal `result`'s `is_error`/`result` fields;
+`message.model` becomes the literal string `"<synthetic>"` for a non-real turn. Separately
+(observed in a follow-up capture, not the primary two): `result.subtype` can be
+`"error_max_budget_usd"` with an `errors: [...]` array when the CLI's own cost tracking
+exceeds `max_budget_usd` mid-run — the CLI can spend slightly over the cap before stopping.
+
+**Not yet observed**: `tool_use`/`tool_result` content blocks (the capture task needed no
+tools) and multi-turn (`num_turns > 1`) behavior. `createStreamJsonTracker()` handles this
+honestly — it only branches on the types actually confirmed above; anything else (including
+future `tool_use` blocks) is silently skipped, not guessed at.
+
+## Amendment Log (Phase 0, this wave)
 
 ## Amendment Log (Phase 0, this wave)
 
@@ -247,17 +295,25 @@ readable streams.
    (`tests/claudeCliServiceSpawn.test.js`): success, non-zero exit with/without stdout,
    abort, timeout-equivalent kill, maxBuffer, ENOENT, chunk publishing. `invoke()`'s resolved
    shape unchanged (same tests, plus the pre-existing `tests/claudeCliService.test.js` pins).
-4. ✅ **Parser shipped, not activated.** `streamJsonParser.js`, unit-tested (7 tests,
-   including multi-chunk line reassembly), but **not wired into the live `--output-format`
-   argument** — switching that flag is a follow-up decision once verified against a real,
-   logged-in CLI session (this environment cannot verify it live; shipping an unverified
-   change to the argument a frozen contract depends on is not an acceptable risk).
+4. ✅ **Activated in v1.7.0.** `--output-format stream-json --verbose` is now `buildArgs()`'s
+   default, verified against two real captures — see "Observed protocol" above.
+   `createStreamJsonTracker()` (`claudeCliService.js`) incrementally parses stdout using
+   `streamJsonParser.js`, publishes `JobProgress` only for the two categories confirmed
+   real+useful (`thinking_tokens`, `assistant` text blocks), captures the terminal `result`
+   line to reconstruct `raw` for `parseResult()` (falls back to the full accumulated stdout,
+   gracefully degrading to `parsed: null`, if no result line was ever seen — e.g. a crash
+   mid-stream). 10 tests against the real observed line shapes
+   (`tests/claudeCliServiceStreamJson.test.js`), including malformed lines, chunk-boundary
+   splits, and concurrent-job isolation. Live end-to-end verified: 17 real
+   `notifications/progress` pushes for a single `delegate_task` call, `delegate_task`'s
+   response byte-compatible with the pre-streaming shape.
 5. ✅ **Shipped.** MCP progress-notification adapter (`mcpProgressAdapter.js`), subscribing to
    the bus and forwarding to `delegate_task`'s `progressToken` when present (verified API:
    `extra._meta.progressToken` + `extra.sendNotification({method: "notifications/progress",
    params: {progressToken, progress, message}})`). `OutputChunk` deliberately excluded from
    forwarding (too high-frequency for a protocol channel — no production subscriber exists
-   for it yet at all).
+   for it yet at all). Required zero changes this wave — `JOB_PROGRESS` was already in its
+   forwarded-types list from v1.6.0, just had no real emitter until now.
 6. **Out of scope for this ADR, future work**: an actual Dashboard process and a plugin API —
    both are "just" new bus subscribers per this architecture, but neither is designed here.
 
@@ -270,7 +326,9 @@ diff, live end-to-end call) before the next begins.
 |---|---|---|
 | Synchronous listener throws or blocks | Medium | `runtimeEventBus.js` wraps every subscriber individually, matching ADR-0001's fail-safe I/O precedent |
 | High-frequency `OutputChunk` floods subscribers | Medium | Coalesce/debounce at emission time; not designed in detail here |
-| `stream-json` line parsing across chunk boundaries | Medium | Line-buffering parser built and unit-tested; **not activated on the live `--output-format` flag this wave** — the exact format can't be verified against a real logged-in CLI in this environment, and guessing wrong would risk the frozen `delegate_task` response shape |
+| `stream-json` line parsing across chunk boundaries | Resolved | Verified against two real captures (v1.7.0); `parseStreamJsonChunk`'s multi-chunk buffering tested, terminal `result` line confirmed field-for-field identical to the old format in both an error-path and a success-path capture |
+| Unobserved event shapes (`tool_use`, multi-turn) | Low | `createStreamJsonTracker()` only branches on confirmed types; anything unrecognized is silently skipped, never guessed at — revisit once a tool-using task is captured |
+| `error_max_budget_usd`: CLI can spend slightly over `max_budget_usd` before stopping | Low | Observed, not a regression introduced by this ADR — `max_budget_usd` was always advisory to the CLI, not a hard pre-check; unchanged behavior, just now visible in `result.subtype`/`errors` |
 | `EventEmitter` (default impl) max-listener warnings as subscriber count grows | Low | `setMaxListeners()` on the shared internal emitter |
 | `spawn()` stream teardown omitted → listener/handle leak | Medium | Explicit cleanup in both the exit callback and the abort path |
 | Scope creep into implementing Dashboard/plugins now | Low (governance) | Explicitly out of scope; this ADR only freezes the bus + event contract |

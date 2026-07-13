@@ -73,9 +73,9 @@ queued ──> starting ──> running ──> completed
 Every job (from either `delegate_task` or `delegate_submit`) exposes `phase`,
 `progressMessage`, `started_at`/`startedAt`, and a continuously-live `runtimeMs` (computed
 from `startedAt` while in flight, frozen once terminal) — see
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#job-lifecycle) for the full field list. No
-streaming exists yet; these are static per-phase fields ready for a future incremental-
-progress feature to update without a schema change.
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#job-lifecycle) for the full field list.
+`progressMessage` is now genuinely live while a job runs (real `stream-json` content — see
+Events & progress below), not just a static per-status label.
 
 ## Tool: `delegate_status`
 
@@ -154,15 +154,21 @@ Every job's lifecycle (queued/starting/running/completed/failed/cancelled) and C
 chunks are published on an in-process `RuntimeEventBus` — a `{publish, subscribe,
 subscribeAll}` contract (default implementation: `node:events`, but that's an internal
 detail; nothing else in the codebase imports it directly). Workspace persistence and the MCP
-progress adapter are both bus subscribers, wired in `mcpServer.js`. Full event schema,
-sequence diagrams, and the streaming-strategy rationale are in
-[docs/adr/ADR-0002-streaming-and-event-architecture.md](docs/adr/ADR-0002-streaming-and-event-architecture.md).
+progress adapter are both bus subscribers, wired in `mcpServer.js`. Full event schema, the
+real observed `stream-json` protocol, sequence diagrams, and the streaming-strategy rationale
+are in [docs/adr/ADR-0002-streaming-and-event-architecture.md](docs/adr/ADR-0002-streaming-and-event-architecture.md).
+
+`delegate_task`/`delegate_submit` run `claude -p` with `--output-format stream-json
+--verbose` (activated in v1.7.0, verified against real captures) — CLI output is parsed
+incrementally, publishing real `JobProgress` while the model is thinking
+(`"Thinking… (~N tokens)"`) and as it responds, not synthesized placeholder text.
 
 If you call `delegate_task` with a progress token (`_meta.progressToken`, per the MCP spec),
 you'll receive `notifications/progress` pushes for the job's lifecycle while the call is
-in flight. `delegate_submit` cannot do this — by the time anything happens, its tool call has
-already returned; keep polling `delegate_status`/`delegate_history` for that path (this is a
-protocol constraint, not a missing feature — see the ADR).
+in flight — verified live: a real call produced 17 progress pushes end to end. `delegate_submit`
+cannot do this — by the time anything happens, its tool call has already returned; keep
+polling `delegate_status`/`delegate_history` for that path (this is a protocol constraint,
+not a missing feature — see the ADR).
 
 ## Security note
 
