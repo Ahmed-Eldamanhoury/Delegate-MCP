@@ -88,6 +88,17 @@ test("delegate_submit returns immediately regardless of task duration", async ()
 
   // content text is the same JSON shape as structuredContent (per the spec's example response)
   assert.deepEqual(JSON.parse(response.content[0].text), response.structuredContent);
+
+  // Drain the background job before the test returns. Without this, its 300ms completion (and
+  // the workspace persistence it triggers) races arbitrarily against whichever later test
+  // happens to be running when it lands — since it shares this file's module-level `config`
+  // (and thus `tempWorkspaceRoot`) with every other test. Until it settles, its workspace
+  // directory has no metadata.json, so pruneWorkspaces correctly treats it as still in-flight
+  // and never touches it — but it still counts toward a raw directory listing, which is
+  // exactly what made "pruneWorkspaces keeps disk usage bounded" flaky (verified via a real
+  // reproduction on Linux: a machine/run fast enough that <300ms elapses between this test and
+  // that one hits it; this project's own dev machine happened to never be fast enough to).
+  await jobManager.waitForCompletion(response.structuredContent.job_id);
 });
 
 test("delegate_task still blocks until completion, with an unchanged response shape", async () => {
