@@ -89,8 +89,12 @@ export function createMetricsCollector({ config, logger } = {}) {
   // instant a job leaves the queued/starting/running window, so these never grow unbounded.
   /** @type {Map<string, "queued"|"starting"|"running">} */
   const jobBucket = new Map();
-  /** @type {Map<string, string>} jobId -> JobQueued timestamp, cleared once consumed or job ends */
-  const queuedAt = new Map();
+  /**
+   * jobId -> {queuedAt, startedAt}, kept alive for the job's whole non-terminal lifetime (not
+   * just until "starting") so getActiveJobs() can report both timestamps for SnapshotBuilder.
+   * @type {Map<string, {queuedAt: string, startedAt: string|null}>}
+   */
+  const jobMeta = new Map();
 
   function recordRuntime(runtimeMs) {
     if (typeof runtimeMs !== "number") return;
@@ -104,7 +108,7 @@ export function createMetricsCollector({ config, logger } = {}) {
     if (bucket === "queued") queuedJobs -= 1;
     else if (bucket === "running") runningJobs -= 1;
     jobBucket.delete(jobId);
-    queuedAt.delete(jobId);
+    jobMeta.delete(jobId);
     counterBump();
   }
 
@@ -116,24 +120,25 @@ export function createMetricsCollector({ config, logger } = {}) {
       case EVENT_TYPES.JOB_QUEUED:
         queuedJobs += 1;
         jobBucket.set(jobId, "queued");
-        queuedAt.set(jobId, timestamp);
+        jobMeta.set(jobId, { queuedAt: timestamp, startedAt: null });
         return;
 
       case EVENT_TYPES.JOB_STATE_CHANGED:
         if (payload.to === "starting") {
           if (jobBucket.get(jobId) === "queued") {
             queuedJobs -= 1;
-            const startedTimestamp = queuedAt.get(jobId);
-            if (startedTimestamp) {
-              queueWaitSumMs += new Date(timestamp).getTime() - new Date(startedTimestamp).getTime();
+            const queuedTimestamp = jobMeta.get(jobId)?.queuedAt;
+            if (queuedTimestamp) {
+              queueWaitSumMs += new Date(timestamp).getTime() - new Date(queuedTimestamp).getTime();
               queueWaitCount += 1;
-              queuedAt.delete(jobId);
             }
           }
           jobBucket.set(jobId, "starting");
         } else if (payload.to === "running") {
           runningJobs += 1;
           jobBucket.set(jobId, "running");
+          const meta = jobMeta.get(jobId);
+          if (meta) meta.startedAt = timestamp;
         }
         return;
 
@@ -201,5 +206,20 @@ export function createMetricsCollector({ config, logger } = {}) {
     };
   }
 
-  return Object.freeze({ record, getMetrics });
+  /**
+   * Lean, event-derived summaries of currently non-terminal jobs — sourced entirely from
+   * jobBucket/jobMeta (built from RuntimeEvents), never from a JobManager query. This is
+   * Observability's own derived view, distinct from models/job.js's JobSummary (which needs a
+   * full Job record Observability deliberately never holds a reference to). Used by
+   * SnapshotBuilder for Snapshot.activeJobs.
+   * @returns {{jobId: string, status: "queued"|"starting"|"running", queuedAt: string, startedAt: string|null}[]}
+   */
+  function getActiveJobs() {
+    return Array.from(jobBucket.entries()).map(([jobId, status]) => {
+      const meta = jobMeta.get(jobId);
+      return { jobId, status, queuedAt: meta?.queuedAt ?? null, startedAt: meta?.startedAt ?? null };
+    });
+  }
+
+  return Object.freeze({ record, getMetrics, getActiveJobs });
 }

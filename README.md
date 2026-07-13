@@ -181,10 +181,19 @@ incremental job metrics (queued/running/completed/failed/cancelled counts, avera
 runtime, average queue wait, event/output-chunk counters) and a per-job event timeline,
 bounded the same way job/workspace history already are.
 
-This wave (Phase 1) wires the service itself — it is **not yet exposed** through any MCP tool,
-Dashboard, or other API; that's future work per ADR-0003's Extension Rules (Dashboard, REST
-API, Prometheus/Grafana, future MCP tools all consume `ObservabilityService`, never the bus
-directly, whenever they're built).
+Beyond metrics/timeline (Phase 1), `ObservabilityService` also exposes:
+- **`replay(jobId)`** — reconstructs a job's event history for viewing (read-only, never
+  re-executes anything): full fidelity while the job's timeline is still in `TimelineStore`,
+  a coarser reconstruction from the workspace mirror once evicted, or `unavailable`.
+- **`getSnapshot()`** — an immutable, deep-frozen point-in-time view (`{takenAt, metrics,
+  activeJobs}`) for future Dashboard polling.
+- **`registerConsumer()`/`unregisterConsumer()`/`getConsumerHealth()`/`getConsumerStatistics()`**
+  — bookkeeping for future consumers (no transport layer of its own).
+
+None of this is exposed through any MCP tool, Dashboard, or other API yet — that's future work
+per ADR-0003's Extension Rules (Dashboard, REST API, Prometheus/Grafana, future MCP tools all
+consume `ObservabilityService`, never the bus directly, whenever they're built). Frozen public
+contracts: [docs/OBSERVABILITY_FREEZE.md](docs/OBSERVABILITY_FREEZE.md).
 
 ## Security note
 

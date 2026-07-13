@@ -1,5 +1,52 @@
 # Changelog
 
+## [1.9.0] - 2026-07-13
+
+Observability Platform, Phase 2 — final capability wave before v1.0
+([ADR-0003](docs/adr/ADR-0003-observability-architecture.md),
+[docs/OBSERVABILITY_FREEZE.md](docs/OBSERVABILITY_FREEZE.md)).
+
+### Added
+- **`ReplayEngine`** (`src/services/replayEngine.js`): reconstructs a job's event history for
+  viewing — read-only, deterministic, zero side effects. Sources, in priority order: runtime
+  (`TimelineStore`, full fidelity) → workspace (`metadata.json`, coarse, entries marked
+  `synthetic: true`) → `unavailable`. Never duplicates stored data — only reads.
+- **`SnapshotBuilder`** (`src/services/snapshotBuilder.js`): immutable point-in-time snapshots
+  (`{takenAt, metrics, activeJobs}`) via `structuredClone()` + recursive `Object.freeze()` —
+  every level of a snapshot is frozen, not just the top level. Pull-only, no background timer.
+- **`ConsumerRegistry`** (`src/services/consumerRegistry.js`): registration, unregistration,
+  health (`active`/`registeredAt`/`lastSeenAt`), statistics (`activeCount`/`totalRegistered`),
+  and consumer metadata — pure in-memory bookkeeping, no transport layer.
+- **`MetricsCollector.getActiveJobs()`**: new event-derived read of currently non-terminal
+  jobs (`{jobId, status, queuedAt, startedAt}`), sourced entirely from the same
+  RuntimeEvent-driven bookkeeping `getMetrics()` already used — never queries `JobManager`.
+  Backing this required refactoring the collector's internal `queuedAt` map into a `jobMeta`
+  map kept alive for a job's whole non-terminal lifetime (previously cleared right after the
+  "starting" transition); `getMetrics()`'s output is unchanged, verified by the full pre-
+  existing metricsCollector test suite passing unmodified.
+- `ObservabilityService` gains `replay()`, `getSnapshot()`, `registerConsumer()`,
+  `unregisterConsumer()`, `touchConsumer()`, `listConsumers()`, `getConsumerHealth()`,
+  `getConsumerStatistics()` — still zero MCP exposure, no Dashboard/REST/plugin consumes any
+  of this yet.
+- 39 new tests (`replayEngine`, `snapshotBuilder`, `consumerRegistry`, plus 6 new
+  `observabilityService` integration/concurrency tests covering the full new surface
+  end-to-end).
+- **`docs/OBSERVABILITY_FREEZE.md`**: freezes Observability's public contracts (structural,
+  not implementation) ahead of v1.0.
+
+### Fixed (found during this wave's review, evidence-based)
+- **`ConsumerRegistry` metadata aliasing**: caller-supplied `metadata` was stored and returned
+  by reference, not cloned — mutating a `list()` result's `.metadata`, or the caller's own
+  original object after `register()`, silently corrupted the registry's internal state.
+  Fixed by shallow-cloning `metadata` on both the way in (`register()`) and the way out
+  (`list()`). Two regression tests added.
+
+### Compatibility
+Zero MCP schema change — all 6 tools re-verified byte-identical via Inspector.
+`RuntimeEventBus`, `JobManager`, `Workspace`, streaming, and Phase 1 Observability behavior
+are all untouched; `MetricsCollector.getMetrics()`'s output shape and values are unchanged
+despite the internal `jobMeta` refactor (verified by the unmodified Phase 1 test suite).
+
 ## [1.8.0] - 2026-07-13
 
 ADR-0003 Approval & Observability Platform, Phase 1

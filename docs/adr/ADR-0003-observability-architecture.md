@@ -1,11 +1,13 @@
 # ADR-0003: Observability Architecture
 
 ## Status
-**Accepted** — amended and approved in the ADR-0003 Approval & Implementation Wave 1 review.
-Verified against every guarantee in `docs/FOUNDATION_FREEZE.md` (see Amendment Log below).
-Phase 1 (`ObservabilityService` + `MetricsCollector` + `TimelineStore`) is implemented as of
-this wave; `ReplayEngine`/`SnapshotBuilder`/`ConsumerRegistry` remain design-only pending
-Phase 2.
+**Accepted and fully implemented** (v1.9.0). Amended and approved in the ADR-0003 Approval &
+Implementation Wave 1 review; verified against every guarantee in
+`docs/FOUNDATION_FREEZE.md` (see Amendment Log below). Phase 1
+(`ObservabilityService` + `MetricsCollector` + `TimelineStore`) shipped in v1.8.0; Phase 2
+(`ReplayEngine` + `SnapshotBuilder` + `ConsumerRegistry`) shipped in v1.9.0. Contracts frozen
+in [docs/OBSERVABILITY_FREEZE.md](../OBSERVABILITY_FREEZE.md). No Dashboard, REST API,
+plugin, or new MCP tool consumes `ObservabilityService` yet — those remain future waves.
 
 ## Amendment Log
 - **Passive Observation Rule**, **Dependency Direction**, **Non-Goals**, **Data Ownership**,
@@ -228,6 +230,15 @@ anything, has zero side effects. Source selection, in priority order:
 3. **Artifacts**: `artifacts/` is reserved and empty today (ADR-0001) — nothing to replay from
    yet; returns `source: "unavailable"` until a future wave populates it.
 
+**Clarification (Phase 2 implementation)**: since `artifacts/` remains empty/reserved, the
+implemented `ReplayEngine` collapses sources 2 and 3 into a single `"workspace"` source (a
+job's whole workspace directory, of which `artifacts/` is a subdirectory) — there was nothing
+distinct to source from `artifacts/` yet to justify a separate code path. This is a
+clarification of an already-approved design detail, not an architecture change: the priority
+order and semantics (runtime full-fidelity, workspace coarse fallback, otherwise unavailable)
+are unchanged. Revisit as a real ADR update if a future wave populates `artifacts/` with data
+meaningfully different from `metadata.json`.
+
 **Known limitation, stated plainly**: full-fidelity replay is only possible while a job's
 timeline is still in `TimelineStore`'s retained window. This ADR does not propose persisting
 the full event stream to disk (that would duplicate `TimelineStore`'s data, which the spec
@@ -322,12 +333,18 @@ itself (no new MCP tools — that's explicitly deferred future work per the tabl
    consumers exist yet (no MCP tool exposes it) — this phase is independently shippable and
    was verified via 27 new tests plus a full Inspector `tools/list` diff (byte-identical, zero
    schema change).
-2. `SnapshotBuilder` + `ReplayEngine` on top of the stores from phase 1 — not started.
-3. `ConsumerRegistry` + one trivial in-process test consumer proving the full contract — not
-   started.
+2. ✅ **Implemented (v1.9.0)**: `SnapshotBuilder` (`src/services/snapshotBuilder.js`) +
+   `ReplayEngine` (`src/services/replayEngine.js`) on top of the phase-1 stores. Snapshots are
+   `structuredClone()` + recursively `Object.freeze()`d. Replay collapsed the original
+   Workspace/Artifacts split into one `"workspace"` source (see the Clarification above);
+   priority is runtime > workspace > unavailable.
+3. ✅ **Implemented (v1.9.0)**: `ConsumerRegistry` (`src/services/consumerRegistry.js`) —
+   registration/unregistration/health/statistics/consumer metadata, no transport layer.
+   Caller-supplied metadata is shallow-cloned on both register() and list() to prevent
+   aliasing (found and fixed during this wave's review — see CHANGELOG).
 4. (Separate future ADRs, not this one): Web Dashboard, REST API, CLI Dashboard, VSCode
    extension, Prometheus/Grafana, future MCP tools — each is its own transport/framework
-   decision.
+   decision. No consumer of `ObservabilityService` exists yet.
 
 ## Alternatives considered
 - **Let Dashboard/plugins subscribe to `RuntimeEventBus` directly**: rejected — this is

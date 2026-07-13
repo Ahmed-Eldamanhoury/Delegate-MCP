@@ -18,9 +18,12 @@ src/
   services/workspaceManager.js  per-job on-disk artifact mirror (metadata/context/stdout/stderr/result)
   services/workspaceEventBridge.js  subscribes workspace's terminal-side persistence to the bus
   services/mcpProgressAdapter.js  forwards a job's bus events as MCP notifications/progress
-  services/observabilityService.js  read-only bus.subscribeAll() consumer for metrics/timeline (ADR-0003)
+  services/observabilityService.js  read-only bus.subscribeAll() consumer; metrics/timeline/replay/snapshot/consumers (ADR-0003)
   services/metricsCollector.js  O(1) incremental job metrics + on-demand workspace usage
   services/timelineStore.js  per-job bounded, ordered event history
+  services/replayEngine.js  read-only job-history reconstruction (runtime -> workspace -> unavailable)
+  services/snapshotBuilder.js  immutable point-in-time metrics+activeJobs snapshots
+  services/consumerRegistry.js  in-memory consumer registration/health/statistics bookkeeping
   services/streamJsonParser.js  incremental stream-json line parser (pure, reused by claudeCliService's tracker)
   models/schemas.js       zod input schema for delegate_task/delegate_submit (the public tool contract)
   models/executionContext.js  ExecutionContext shape + factory — the CLI service's only input besides prompt
@@ -168,8 +171,17 @@ execution.
   job's timeline is never evicted.
 - Wired once in `mcpServer.js`, `maxTimelineHistory` defaulted to `config.maxJobHistory` (no
   new config field for Phase 1).
-- Not yet exposed via any MCP tool — `ReplayEngine`/`SnapshotBuilder`/`ConsumerRegistry` and
-  any Dashboard/API surface remain ADR-0003 design only (Phase 2+).
+- `ReplayEngine`, `SnapshotBuilder`, `ConsumerRegistry` (Phase 2, v1.9.0) round out the
+  platform: replay reconstructs a job's history (runtime full-fidelity, workspace coarse
+  fallback via `metadata.json`, entries marked `synthetic: true`, or `unavailable` —
+  read-only, deterministic, never duplicates stored data); snapshots are
+  `structuredClone()` + recursively `Object.freeze()`d (`{takenAt, metrics, activeJobs}`,
+  `activeJobs` sourced from `MetricsCollector.getActiveJobs()`, itself event-derived, never a
+  `JobManager` query); `ConsumerRegistry` is pure in-memory registration/health/statistics
+  bookkeeping with no transport layer of its own.
+- Not yet exposed via any MCP tool — Dashboard/REST API/plugin/future-MCP-tool consumption
+  remains future work. Frozen public contracts:
+  [OBSERVABILITY_FREEZE.md](OBSERVABILITY_FREEZE.md).
 
 ## Workspace (persistence layer)
 

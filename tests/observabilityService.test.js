@@ -1,8 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { JobManager } from "../src/services/jobManager.js";
 import { createRuntimeEventBus } from "../src/services/runtimeEventBus.js";
 import { createObservabilityService } from "../src/services/observabilityService.js";
+import { persistJobArtifacts } from "../src/services/workspaceManager.js";
+import { toJobView } from "../src/models/job.js";
 import { EVENT_TYPES } from "../src/models/runtimeEvent.js";
 import { delayTask, failTask, waitUntil } from "./testUtils.js";
 
@@ -87,7 +92,22 @@ test("Passive Observation Rule: ObservabilityService exposes no job/bus mutator 
   for (const forbidden of ["submit", "cancelJob", "publish", "waitForCompletion"]) {
     assert.equal(typeof observability[forbidden], "undefined", `must not expose ${forbidden}`);
   }
-  assert.deepEqual(Object.keys(observability).sort(), ["close", "getMetrics", "getTimeline"]);
+  assert.deepEqual(
+    Object.keys(observability).sort(),
+    [
+      "close",
+      "getConsumerHealth",
+      "getConsumerStatistics",
+      "getMetrics",
+      "getSnapshot",
+      "getTimeline",
+      "listConsumers",
+      "registerConsumer",
+      "replay",
+      "touchConsumer",
+      "unregisterConsumer",
+    ].sort()
+  );
 });
 
 test("Passive Observation Rule: observing a job never changes JobManager's own state or timing", async () => {
@@ -132,4 +152,71 @@ test("retention cap is honored end-to-end: oldest terminal job's timeline is evi
 
   assert.deepEqual(observability.getTimeline(idA), [], "oldest terminal job's timeline must be evicted past the cap");
   assert.ok(observability.getTimeline(idC).length > 0);
+});
+
+test("replay() sources from runtime while retained, then falls back to workspace once evicted", async () => {
+  const bus = createRuntimeEventBus();
+  const manager = new JobManager({ bus, maxConcurrent: 1 });
+  const workspaceRoot = mkdtempSync(join(tmpdir(), "obs-svc-replay-"));
+  try {
+    const observability = createObservabilityService({ bus, config: { workspaceRoot }, maxTimelineHistory: 1 });
+    const idA = manager.submit(delayTask(5, "a"));
+    await waitUntil(() => manager.getJob(idA).status === "completed");
+    persistJobArtifacts(idA, toJobView(manager.getJob(idA)), { workspaceRoot }, undefined);
+
+    assert.equal(observability.replay(idA).source, "runtime");
+
+    const idB = manager.submit(delayTask(5, "b")); // pushes TimelineStore past its cap of 1
+    await waitUntil(() => manager.getJob(idB).status === "completed");
+
+    const replayed = observability.replay(idA);
+    assert.equal(replayed.source, "workspace", "evicted from runtime, must fall back to the persisted workspace mirror");
+    assert.ok(replayed.timeline.length > 0);
+  } finally {
+    rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test("getSnapshot() reflects live activeJobs and is immutable", async () => {
+  const bus = createRuntimeEventBus();
+  const manager = new JobManager({ bus, maxConcurrent: 1 });
+  const observability = createObservabilityService({ bus });
+
+  manager.submit(delayTask(50, "still-running"));
+  await waitUntil(() => observability.getSnapshot().activeJobs.length > 0);
+
+  const snapshot = observability.getSnapshot();
+  assert.equal(snapshot.activeJobs.length, 1);
+  assert.throws(() => (snapshot.metrics.queuedJobs = 999));
+});
+
+test("consumer registry round-trips through the service: register, list, health, statistics, unregister", () => {
+  const bus = createRuntimeEventBus();
+  const observability = createObservabilityService({ bus });
+
+  const handle = observability.registerConsumer("dashboard", { transport: "http" });
+  assert.equal(observability.listConsumers().length, 1);
+  assert.equal(observability.getConsumerHealth(handle.id).active, true);
+  assert.deepEqual(observability.getConsumerStatistics(), { activeCount: 1, totalRegistered: 1 });
+
+  assert.equal(observability.unregisterConsumer(handle.id), true);
+  assert.equal(observability.listConsumers().length, 0);
+  assert.deepEqual(observability.getConsumerStatistics(), { activeCount: 0, totalRegistered: 1 });
+});
+
+test("concurrency: replay/getSnapshot/consumer registry all stay correct while several jobs run at once", async () => {
+  const bus = createRuntimeEventBus();
+  const manager = new JobManager({ bus, maxConcurrent: 5 });
+  const observability = createObservabilityService({ bus });
+  observability.registerConsumer("consumer-a");
+  observability.registerConsumer("consumer-b");
+
+  const ids = [10, 15, 5, 20, 8].map((ms) => manager.submit(delayTask(ms, "x")));
+  await Promise.all(ids.map((id) => waitUntil(() => manager.getJob(id).status === "completed")));
+
+  for (const id of ids) {
+    assert.equal(observability.replay(id).source, "runtime");
+  }
+  assert.equal(observability.getSnapshot().activeJobs.length, 0);
+  assert.equal(observability.getConsumerStatistics().activeCount, 2);
 });
