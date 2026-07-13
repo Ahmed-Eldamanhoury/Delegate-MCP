@@ -3,8 +3,11 @@ import { join, dirname } from "node:path";
 
 // The real executable, not the claude.cmd shim — spawning it directly needs no shell,
 // which is what keeps arbitrary `prompt` text from ever being interpreted by cmd.exe.
-const DEFAULT_BIN =
-  "C:\\Users\\REDACTED_USER\\AppData\\Roaming\\npm\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe";
+// Derived from %APPDATA% (npm's default global install root on Windows) rather than a
+// hardcoded path, so this resolves correctly for whichever machine/user runs it.
+const DEFAULT_BIN = process.env.APPDATA
+  ? join(process.env.APPDATA, "npm", "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe")
+  : "";
 
 const PROJECT_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKSPACE_ROOT = join(PROJECT_ROOT, "workspace");

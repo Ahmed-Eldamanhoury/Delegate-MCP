@@ -2,7 +2,7 @@
   "mcpServers": {
     "claude-delegate": {
       "command": "node",
-      "args": ["C:\\Users\\REDACTED_USER\\claude-delegate-mcp\\server.js"]
+      "args": ["C:\\path\\to\\claude-delegate-mcp\\server.js"]
     }
   }
 }
