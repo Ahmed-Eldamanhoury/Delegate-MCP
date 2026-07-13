@@ -224,3 +224,13 @@ Tool-level smoke test with [MCP Inspector](https://github.com/modelcontextprotoc
 ```
 npx @modelcontextprotocol/inspector --cli node server.js --method tools/list
 ```
+
+## Project info
+
+- **License**: [MIT](LICENSE)
+- **Contributing**: [CONTRIBUTING.md](CONTRIBUTING.md)
+- **Support**: [SUPPORT.md](SUPPORT.md)
+- **Security**: [SECURITY.md](SECURITY.md)
+- **Code of Conduct**: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- **Roadmap**: [ROADMAP.md](ROADMAP.md)
+- **Release notes**: [docs/releases/](docs/releases/)

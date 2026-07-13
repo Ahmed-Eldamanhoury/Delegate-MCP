@@ -1,8 +1,8 @@
 # Security Policy
 
-This is a private, single-maintainer, locally-run MCP server — there is no public repository,
-issue tracker, or user base to disclose to. If you have local access to this project and find
-a security issue, contact the maintainer directly rather than filing it anywhere public.
+This is a single-maintainer, locally-run MCP server
+([repository](https://github.com/Ahmed-Eldamanhoury/Delegate-MCP)). If you find a security
+issue, please report it privately (see below) rather than filing a public issue.
 
 ## Supported versions
 
@@ -27,5 +27,8 @@ Full audit evidence: [docs/CERTIFICATION_REPORT_v1.md](docs/CERTIFICATION_REPORT
 
 ## Reporting a vulnerability
 
-Contact the maintainer directly. Do not open a public issue (none exists) or post details
-anywhere public before the maintainer has had a chance to review and, if needed, fix it.
+Use GitHub's private vulnerability reporting: open the
+[repository's Security tab](https://github.com/Ahmed-Eldamanhoury/Delegate-MCP/security) and
+click "Report a vulnerability." Do not open a public issue for a security report, and do not
+post details anywhere public before the maintainer has had a chance to review and, if needed,
+fix it.

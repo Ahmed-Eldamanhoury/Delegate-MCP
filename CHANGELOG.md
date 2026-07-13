@@ -28,6 +28,31 @@ Zero MCP schema change — all 6 tools re-verified byte-identical via Inspector.
 source file changed in this wave (release engineering only; the one certification-report-
 documented defect from the prior wave was already fixed then, not here).
 
+### Added (Official Open Source Release follow-up, same 2.0.0 — not yet tagged/pushed)
+- `LICENSE` (MIT).
+- `SUPPORT.md`.
+- `package.json`: `description`, `keywords`, `homepage`, `repository`, `bugs`, `license`,
+  `author` — previously absent (the package had no remote/license decision until now).
+- `docs/releases/RELEASE_NOTES_v2.0.0.md` — the canonical, self-contained GitHub Release notes
+  (`RELEASE_NOTES_v1.0.0.md` is kept as the original milestone-named draft).
+- Root `ROADMAP.md` — a short pointer into `docs/releases/ROADMAP_v1.1.md` (avoids duplicating it).
+- `CONTRIBUTING.md`/`SECURITY.md` rewritten for an actual public repository (they previously
+  assumed no remote existed); `CODE_OF_CONDUCT.md` upgraded from a placeholder to the real
+  Contributor Covenant v2.1, now that this project is genuinely going public.
+
+### Fixed (verified open-source-readiness blocker)
+- **`DEFAULT_BIN` hardcoded the maintainer's real Windows username** in `src/config/index.js`
+  and in `examples/desktop-config-snippet.json`'s example path — would have leaked personal
+  information in a public repository. Fixed by deriving `DEFAULT_BIN` from `%APPDATA%` at
+  runtime (mirrors the existing `baseCwd`/`process.cwd()` pattern already in the same
+  function) instead of a literal path; the example config now uses a generic placeholder path.
+  Zero behavior change on any machine with `APPDATA` set (the normal case).
+- **The same leak existed in ~13 prior commits' history**, not just the current snapshot.
+  Since no remote had ever been pushed, history was rewritten with `git filter-repo
+  --replace-text` to redact the username from every historical blob before this project's
+  first public push — a full local backup was taken first. Re-verified: zero occurrences of
+  the real name anywhere in `git log --all -p` after the rewrite.
+
 ## [1.9.0] - 2026-07-13
 
 Observability Platform, Phase 2 — final capability wave before v1.0
