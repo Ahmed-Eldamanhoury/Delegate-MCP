@@ -1,5 +1,45 @@
 # Changelog
 
+## [1.8.0] - 2026-07-13
+
+ADR-0003 Approval & Observability Platform, Phase 1
+([ADR-0003](docs/adr/ADR-0003-observability-architecture.md)).
+
+### Added
+- **ADR-0003 accepted**, amended during review with five mandatory sections closing a gap in
+  the original Proposed draft — Passive Observation Rule, Dependency Direction, Non-Goals,
+  Data Ownership, Extension Rules — each stating as an explicit, checkable rule what the
+  original draft only implied through component descriptions.
+- **`ObservabilityService`** (`src/services/observabilityService.js`): a second, independent
+  `RuntimeEventBus.subscribeAll()` consumer, read-only by construction — it holds no reference
+  to `JobManager`, `claudeCliService`, or `bus.publish`, so nothing in this layer can cancel a
+  job, execute a command, or mutate Workspace, even by accident. `getMetrics()`/`getTimeline()`
+  are its entire public surface for this phase.
+- **`MetricsCollector`** (`src/services/metricsCollector.js`): O(1) incremental aggregates —
+  queued/running/completed/failed/cancelled job counts, average/maximum runtime, average queue
+  wait, streaming-event/output-chunk/total-event counters, progress rate. Workspace size and
+  artifact count are the one on-demand exception (no stored history, computed from disk via
+  `workspaceManager`'s own `getWorkspaceRoot()` when `getMetrics()` is called).
+- **`TimelineStore`** (`src/services/timelineStore.js`): per-job, append-only event history in
+  deterministic (recorded) order, filterable by type/timestamp, bounded by
+  `maxTimelineHistory` with the same oldest-terminal-first eviction shape `JobManager`/
+  `workspaceManager` already use — an in-flight job's timeline is never evicted.
+- Wired into `mcpServer.js` alongside the existing `workspaceEventBridge` subscriber — not
+  exposed via any MCP tool yet (no schema change).
+- 27 new tests: `metricsCollector.test.js` (incremental math, workspace-usage queries),
+  `timelineStore.test.js` (ordering, filtering, retention), `observabilityService.test.js`
+  (full lifecycle integration against a real `JobManager`, concurrency, retention end-to-end,
+  and two explicit Passive-Observation-Rule regression tests: no mutator methods exposed, and
+  observing a job never affects `JobManager`'s own state).
+
+### Not implemented (deliberately, per this wave's scope)
+`ReplayEngine`, `SnapshotBuilder`, `ConsumerRegistry`, and any Dashboard/API surface remain
+ADR-0003 design only — Phase 2.
+
+### Compatibility
+Zero MCP schema change — all 6 tools re-verified byte-identical via Inspector.
+`RuntimeEventBus`, `JobManager`, `Workspace`, and streaming are untouched.
+
 ## [1.7.0] - 2026-07-13
 
 Streaming Activation & Protocol Validation

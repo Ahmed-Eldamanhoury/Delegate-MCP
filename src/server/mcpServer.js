@@ -5,6 +5,7 @@ import { JOB_STATUS } from "../models/job.js";
 import { JobManager } from "../services/jobManager.js";
 import { createRuntimeEventBus } from "../services/runtimeEventBus.js";
 import { wireWorkspaceToEventBus } from "../services/workspaceEventBridge.js";
+import { createObservabilityService } from "../services/observabilityService.js";
 import { createDelegateTaskHandler } from "../handlers/delegateTaskHandler.js";
 import { createDelegateSubmitHandler } from "../handlers/delegateSubmitHandler.js";
 import { createDelegateStatusHandler } from "../handlers/delegateStatusHandler.js";
@@ -46,6 +47,14 @@ export function createMcpServer({ config, logger, version }) {
   // future consumers (History/Dashboard/plugins): subscribe to the same `bus` instance;
   // nothing here needs to change for them to hook in.
   wireWorkspaceToEventBus({ bus, jobManager, config, logger });
+
+  // ADR-0003 Phase 1: Observability is a second, independent bus.subscribeAll() consumer,
+  // read-only by construction (Passive Observation Rule) — it holds no reference to
+  // jobManager or claudeCliService, only the bus. Its subscription closures live inside the
+  // bus itself (same pattern wireWorkspaceToEventBus already uses above), so no local binding
+  // is needed here. Not yet exposed via any MCP tool; this wave wires the service itself, not
+  // a consumer of it.
+  createObservabilityService({ bus, config, logger, maxTimelineHistory: config.maxJobHistory });
 
   server.registerTool(
     "delegate_task",

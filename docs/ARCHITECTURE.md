@@ -18,6 +18,9 @@ src/
   services/workspaceManager.js  per-job on-disk artifact mirror (metadata/context/stdout/stderr/result)
   services/workspaceEventBridge.js  subscribes workspace's terminal-side persistence to the bus
   services/mcpProgressAdapter.js  forwards a job's bus events as MCP notifications/progress
+  services/observabilityService.js  read-only bus.subscribeAll() consumer for metrics/timeline (ADR-0003)
+  services/metricsCollector.js  O(1) incremental job metrics + on-demand workspace usage
+  services/timelineStore.js  per-job bounded, ordered event history
   services/streamJsonParser.js  incremental stream-json line parser (pure, reused by claudeCliService's tracker)
   models/schemas.js       zod input schema for delegate_task/delegate_submit (the public tool contract)
   models/executionContext.js  ExecutionContext shape + factory — the CLI service's only input besides prompt
@@ -141,6 +144,32 @@ for the full evidence. `buildArgs()` always passes `--output-format stream-json 
   useful. Everything else (hook/session bookkeeping, rate-limit telemetry, the model's raw
   `thinking` content, and any unrecognized future shape like `tool_use`) is silently skipped,
   never guessed at.
+
+## Observability
+
+See [ADR-0003](adr/ADR-0003-observability-architecture.md) for the full design. Summary:
+`ObservabilityService` is a *second, independent* `bus.subscribeAll()` consumer, alongside
+`workspaceEventBridge`/`mcpProgressAdapter` — but unlike those two, it's an **observer**, not
+a pipeline participant. The Passive Observation Rule makes this structural, not just
+documented: `ObservabilityService` holds no reference to `JobManager`, `claudeCliService`, or
+`bus.publish` — there is nothing in the object for a future change to accidentally call that
+would mutate anything. Dependency direction is one-way (`RuntimeEventBus → Observability →
+Dashboard → future consumers`); no consumer of `ObservabilityService` can reach back into
+execution.
+
+- `MetricsCollector`: O(1) incremental aggregates from `record(event)` — no stored history
+  arrays. Workspace size/artifact count are the one on-demand exception, computed from disk
+  via `workspaceManager.getWorkspaceRoot()` (reused, not re-derived) only when `getMetrics()`
+  is called.
+- `TimelineStore`: per-job append-only event list, deterministic order (bus dispatch is
+  synchronous, Node is single-threaded — no reordering possible), bounded by
+  `maxTimelineHistory` with the same oldest-*terminal*-first eviction shape
+  `JobManager._trimHistory()`/`workspaceManager.pruneWorkspaces()` already use. An in-flight
+  job's timeline is never evicted.
+- Wired once in `mcpServer.js`, `maxTimelineHistory` defaulted to `config.maxJobHistory` (no
+  new config field for Phase 1).
+- Not yet exposed via any MCP tool — `ReplayEngine`/`SnapshotBuilder`/`ConsumerRegistry` and
+  any Dashboard/API surface remain ADR-0003 design only (Phase 2+).
 
 ## Workspace (persistence layer)
 

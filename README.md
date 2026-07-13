@@ -170,6 +170,22 @@ cannot do this — by the time anything happens, its tool call has already retur
 polling `delegate_status`/`delegate_history` for that path (this is a protocol constraint,
 not a missing feature — see the ADR).
 
+## Observability (metrics & timeline)
+
+An internal `ObservabilityService` subscribes to the same `RuntimeEventBus` as workspace
+persistence and the MCP progress adapter, but as an *observer*, not a pipeline participant —
+it's strictly read-only and never touches `JobManager`, the CLI, or Workspace (see
+[docs/adr/ADR-0003-observability-architecture.md](docs/adr/ADR-0003-observability-architecture.md)
+for the Passive Observation Rule and dependency-direction guarantees). It maintains O(1)
+incremental job metrics (queued/running/completed/failed/cancelled counts, average/maximum
+runtime, average queue wait, event/output-chunk counters) and a per-job event timeline,
+bounded the same way job/workspace history already are.
+
+This wave (Phase 1) wires the service itself — it is **not yet exposed** through any MCP tool,
+Dashboard, or other API; that's future work per ADR-0003's Extension Rules (Dashboard, REST
+API, Prometheus/Grafana, future MCP tools all consume `ObservabilityService`, never the bus
+directly, whenever they're built).
+
 ## Security note
 
 `prompt` is arbitrary text (it may ultimately come from web content an orchestrating model

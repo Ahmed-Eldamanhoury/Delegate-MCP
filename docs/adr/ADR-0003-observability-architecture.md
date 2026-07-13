@@ -1,9 +1,19 @@
 # ADR-0003: Observability Architecture
 
 ## Status
-**Proposed** — design only, nothing in this document is implemented. Per this wave's own
-Phase 0 instruction ("No code until ADR approval is complete"), no source file changes
-accompany this ADR. Not reflected in `docs/FOUNDATION_FREEZE.md` until accepted and built.
+**Accepted** — amended and approved in the ADR-0003 Approval & Implementation Wave 1 review.
+Verified against every guarantee in `docs/FOUNDATION_FREEZE.md` (see Amendment Log below).
+Phase 1 (`ObservabilityService` + `MetricsCollector` + `TimelineStore`) is implemented as of
+this wave; `ReplayEngine`/`SnapshotBuilder`/`ConsumerRegistry` remain design-only pending
+Phase 2.
+
+## Amendment Log
+- **Passive Observation Rule**, **Dependency Direction**, **Non-Goals**, **Data Ownership**,
+  and **Extension Rules** sections added below during the approval review, at the reviewer's
+  explicit request, to close a gap in the original Proposed draft: the draft *implied*
+  read-only/one-directional behavior through component descriptions but never stated it as a
+  standalone, checkable rule. These sections make that rule explicit and independently
+  verifiable rather than inferred.
 
 ## Context
 `RuntimeEventBus` (ADR-0002) currently has exactly two subscriber categories, both part of
@@ -33,6 +43,94 @@ owns "watching," everything else consumes *it*.
   `workspaceManager.pruneWorkspaces()` already established — no new unbounded growth.
 - Zero impact on `FOUNDATION_FREEZE.md`, MCP schemas, or `RuntimeEventBus`'s contract. This is
   purely a new subscriber sitting alongside the existing two.
+
+## Passive Observation Rule
+
+Observability is strictly read-only. `ObservabilityService` and every component beneath it
+(`MetricsCollector`, `TimelineStore`, `ReplayEngine`, `SnapshotBuilder`, `ConsumerRegistry`)
+must never:
+
+- modify `JobManager` state (no calls into `submit`/`cancelJob`/`_transition`/any mutator)
+- change `RuntimeEventBus` state (no `publish` calls — Observability only `subscribe`s)
+- execute commands (no `claudeCliService` calls, no subprocess spawning)
+- cancel or restart jobs
+- mutate Workspace data (no writes under `workspaceRoot`; size/artifact-count queries are
+  read-only `fs.stat`/`fs.readdir` calls, never `fs.write*`/`fs.rm*`)
+
+Enforced structurally, not just by convention: `ObservabilityService`'s only interaction with
+`RuntimeEventBus` is one `bus.subscribeAll()` call at construction time — it holds no
+reference to `JobManager`, `claudeCliService`, or any mutator, so there is nothing to call
+even if a future change tried to. It consumes runtime information and derives read-only views
+from it; that is the entirety of its responsibility.
+
+## Dependency Direction
+
+The dependency graph is strictly one-directional:
+
+```
+RuntimeEventBus
+      │
+      ▼
+ Observability
+      │
+      ▼
+  Dashboard
+      │
+      ▼
+Future Consumers
+```
+
+This must never invert into a control path:
+
+```
+   Dashboard
+      │
+      ▼          ✗ NEVER — no control path may exist through Observability
+ Observability
+      │
+      ▼
+Execution Engine
+```
+
+Concretely: `ObservabilityService`'s public API (`getMetrics`/`getSnapshot`/`getTimeline`/
+`getJobSummary`/`replay`/`registerConsumer`) contains no method that accepts a mutation intent
+(no `cancelJob`, no `submitJob`, no `writeArtifact`). A Dashboard (or any consumer) built
+against this API has no path back into `JobManager`, `RuntimeEventBus`, or the execution
+engine — the API surface itself is the enforcement mechanism, not a documented convention a
+future implementer could accidentally violate.
+
+## Non-Goals
+
+Observability is **not** responsible for:
+
+- execution
+- orchestration
+- scheduling
+- retries
+- job mutation
+- workspace mutation
+- policy enforcement
+- plugin execution
+
+Its responsibility is observation only — deriving read-only views (metrics, timelines,
+snapshots, replays) from runtime information already owned elsewhere. Any future requirement
+that falls into the list above belongs in `JobManager`, `delegationService`, or a new
+component of its own — never bolted onto Observability.
+
+## Data Ownership
+
+No component may duplicate another's ownership:
+
+| Owner | Owns |
+|---|---|
+| `JobManager` | execution state — the authoritative status/result of every job (per `FOUNDATION_FREEZE.md`: "`JobManager` is the single source of truth for job state — no other component may claim authority over a job's status/result") |
+| `Workspace` (`workspaceManager.js`) | persisted artifacts — the on-disk mirror written once at settle time |
+| `RuntimeEventBus` | runtime notifications — the event stream itself, in flight |
+| `Observability` | derived read-only views — `MetricsCollector`'s aggregates, `TimelineStore`'s per-job event lists, `SnapshotBuilder`'s point-in-time snapshots. These are *derived*, not authoritative: if `Observability` restarts, it can rebuild its view from the bus and workspace; nothing downstream of it can lose data that only Observability held. |
+
+This is why `TimelineStore` is explicitly allowed to be lossy/bounded (Data Ownership backs
+the Passive Observation Rule and the Compatibility impact section below: evicting a timeline
+entry never loses the underlying fact, since `JobManager`/`Workspace` still own it).
 
 ## Two kinds of bus subscriber (the key distinction this ADR draws)
 
@@ -168,19 +266,26 @@ and renders the result — it has no reference to `RuntimeEventBus`, `JobManager
 `RuntimeEvent`, satisfying "the Dashboard should never know RuntimeEventBus exists" by
 construction, not by convention.
 
-## Future API contracts (design intent only, none implemented)
+## Extension Rules
+
+All future consumers depend only on `ObservabilityService` — never directly on
+`RuntimeEventBus`. This is the same rule as Dependency Direction above, restated per-consumer
+so each future wave that adds one has an explicit checklist item to verify against:
 
 | Consumer | How it would use `ObservabilityService` | Transport decision |
 |---|---|---|
-| Web Dashboard | Thin HTTP/WebSocket adapter translating `getSnapshot()`/`getTimeline()` into responses | Deferred — its own future ADR |
+| Dashboard | Thin HTTP/WebSocket adapter translating `getSnapshot()`/`getTimeline()` into responses | Deferred — its own future ADR |
 | CLI Dashboard | Polls `getSnapshot()` on an interval, renders to terminal | Deferred |
 | VSCode Extension | Either an in-process `require` (if colocated) or a local HTTP bridge | Deferred |
 | REST API | Endpoints mapping 1:1 to `ObservabilityService`'s methods | Deferred — framework choice is a real dependency decision, not made here |
-| Future MCP Tools (e.g. `delegate_metrics`) | Handler calls `ObservabilityService` internally, same pattern `delegate_status` already uses for `JobManager` | Deferred — **no MCP schema change in this ADR** |
+| Prometheus Exporter | Scrape endpoint translating `getMetrics()` into the Prometheus text exposition format | Deferred — no scrape server exists in this repo today |
+| Grafana Adapter | Consumes the Prometheus Exporter (or a REST endpoint) — does not talk to `ObservabilityService` directly, since Grafana itself only speaks HTTP/Prometheus, not JS | Deferred |
+| AI Consumers (e.g. an orchestrating model asking "what's running right now") | A future MCP tool (e.g. `delegate_metrics`) whose handler calls `ObservabilityService` internally, same pattern `delegate_status` already uses for `JobManager` | Deferred — **no MCP schema change in this ADR** |
 
 None of these are scoped, sized, or committed to by this document — the point is that
 `ObservabilityService`'s contract is transport-agnostic by design, so each can wrap it
-identically whenever it's actually built.
+identically whenever it's actually built, and none of them may reach past Observability to
+the bus, `JobManager`, or the execution engine (Dependency Direction).
 
 ## Security
 
@@ -210,13 +315,19 @@ touch `JobManager`, `claudeCliService`, `workspaceManager`, `workspaceEventBridg
 `mcpProgressAdapter`, or any MCP tool schema. Zero schema changes are introduced by this ADR
 itself (no new MCP tools — that's explicitly deferred future work per the table above).
 
-## Migration plan (future waves — sequencing only, nothing here is scheduled)
-1. `ObservabilityService` + `MetricsCollector` + `TimelineStore` core — subscribe, track,
-   query. No consumers exist yet; this alone is independently testable and shippable.
-2. `SnapshotBuilder` + `ReplayEngine` on top of the stores from phase 1.
-3. `ConsumerRegistry` + one trivial in-process test consumer proving the full contract.
+## Migration plan
+1. ✅ **Implemented (v1.8.0)**: `ObservabilityService` (`src/services/observabilityService.js`)
+   + `MetricsCollector` (`src/services/metricsCollector.js`) + `TimelineStore`
+   (`src/services/timelineStore.js`) — subscribe, track, query. Wired in `mcpServer.js`. No
+   consumers exist yet (no MCP tool exposes it) — this phase is independently shippable and
+   was verified via 27 new tests plus a full Inspector `tools/list` diff (byte-identical, zero
+   schema change).
+2. `SnapshotBuilder` + `ReplayEngine` on top of the stores from phase 1 — not started.
+3. `ConsumerRegistry` + one trivial in-process test consumer proving the full contract — not
+   started.
 4. (Separate future ADRs, not this one): Web Dashboard, REST API, CLI Dashboard, VSCode
-   extension, MCP tools — each is its own transport/framework decision.
+   extension, Prometheus/Grafana, future MCP tools — each is its own transport/framework
+   decision.
 
 ## Alternatives considered
 - **Let Dashboard/plugins subscribe to `RuntimeEventBus` directly**: rejected — this is
