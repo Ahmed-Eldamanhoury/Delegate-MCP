@@ -1,0 +1,32 @@
+# Recommended label set — not auto-applied (no remote/credentials yet). Apply once the repo
+# exists, e.g. via https://github.com/marketplace/actions/github-label-sync or manually.
+- name: bug
+  color: "d73a4a"
+  description: Something isn't working as documented
+- name: enhancement
+  color: "a2eeef"
+  description: New feature or request
+- name: documentation
+  color: "0075ca"
+  description: Improvements or corrections to documentation
+- name: question
+  color: "d876e3"
+  description: Further information is requested
+- name: good first issue
+  color: "7057ff"
+  description: Good for newcomers
+- name: help wanted
+  color: "008672"
+  description: Extra attention is needed
+- name: security
+  color: "b60205"
+  description: Security-relevant issue — see SECURITY.md before filing publicly
+- name: performance
+  color: "fbca04"
+  description: Performance/efficiency concern
+- name: architecture
+  color: "5319e7"
+  description: Touches a frozen contract or ADR — needs design discussion first
+- name: release
+  color: "0e8a16"
+  description: Release engineering / versioning / packaging
