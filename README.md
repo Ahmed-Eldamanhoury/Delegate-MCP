@@ -23,6 +23,29 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the code layout.
 | `CLAUDE_DELEGATE_BASE_DIR` | process cwd | default working directory for delegated tasks |
 | `CLAUDE_DELEGATE_WORKSPACE_DIR` | `<project>/workspace` | root for per-job on-disk artifacts — see Workspace below |
 | `CLAUDE_DELEGATE_MAX_WORKSPACE_HISTORY` | `100` | oldest completed job workspaces beyond this are deleted |
+| `DELEGATE_DEBUG` | unset (off) | `true` enables Debug Mode — see below. Anything else is treated as off. |
+
+## Debug Mode (development only)
+
+Set `DELEGATE_DEBUG=true` to run every delegated CLI call in a **visible terminal window**
+instead of hidden — useful for watching a real session live while developing. Off by default;
+when unset, behavior is byte-identical to every version before this existed.
+
+- Opens Windows Terminal (falls back to `cmd.exe` if not installed), the detected Linux
+  terminal emulator, or `Terminal.app` on macOS.
+- The window shows a banner (exact command, working directory, model, tools, budget, job id),
+  then the live CLI session, then pauses ("Press Enter to close...") once finished.
+- Full logs at `workspace/jobs/<job-id>/logs/`: `prompt.txt`, `command.txt`, `stdout.log`,
+  `stderr.log`, `stream.jsonl` (every stream-json event, timestamped, in order), `response.json`,
+  `metadata.json`.
+- `notifications/progress` still works the same as production — the server tails
+  `stream.jsonl` to keep publishing live progress.
+- **Security**: the prompt never appears on any terminal-launch command line — only job ids and
+  paths this process constructs. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#debug-mode-development-only)
+  for the full reasoning.
+- **Known limitation**: `delegate_cancel` can't forcibly stop a Debug Mode job (the CLI runs in
+  a detached process so the debug session survives an MCP server restart) — close the visible
+  terminal manually to actually stop it.
 
 ## Tool: `delegate_task`
 

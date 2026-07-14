@@ -1,7 +1,8 @@
 import { execFile, spawn } from "node:child_process";
 import { MODEL_FALLBACKS } from "../config/index.js";
 import { EVENT_TYPES } from "../models/runtimeEvent.js";
-import { parseStreamJsonChunk } from "./streamJsonParser.js";
+import { parseStreamJsonChunk, classifyStreamJsonEvent } from "./streamJsonParser.js";
+import { invokeInDebugMode } from "./debugInvoke.js";
 
 /**
  * Builds the argv array for `claude -p ...`. Pure function — no I/O — so it's unit-testable
@@ -46,7 +47,12 @@ export function buildArgs(prompt, context) {
   return args;
 }
 
-function parseResult(raw, exitCode, stderr) {
+/**
+ * Exported (in addition to being used by `invoke()`) so the debug-mode runner can produce the
+ * exact same result shape from within its own process — see `src/debug/debugRunner.js`. Pure,
+ * no behavior change.
+ */
+export function parseResult(raw, exitCode, stderr) {
   try {
     return { raw, parsed: JSON.parse(raw), exitCode, stderr };
   } catch {
@@ -99,13 +105,14 @@ export function buildExecOptions(context, config) {
  * @param {string} bin
  * @param {string[]} args
  * @param {{cwd?: string, env?: object, timeout?: number, signal?: AbortSignal}} spawnOptions
- * @param {{bus?: object, jobId?: string, onSpawn?: () => void, maxBufferBytes: number, onStdout?: (chunk: Buffer) => void}} opts
- *   `onStdout`, if given, is called with each raw stdout chunk in addition to (not instead
+ * @param {{bus?: object, jobId?: string, onSpawn?: () => void, maxBufferBytes: number, onStdout?: (chunk: Buffer) => void, onStderr?: (chunk: Buffer) => void}} opts
+ *   `onStdout`/`onStderr`, if given, are called with each raw chunk in addition to (not instead
  *   of) OutputChunk publishing — used by `invoke()` to layer claude-specific stream-json
- *   parsing on top without this function knowing anything about JSON.
+ *   parsing on top, and by the debug-mode runner (`src/debug/debugRunner.js`) to tee both
+ *   streams to log files, without this function knowing anything about JSON or files.
  * @returns {Promise<{raw: string, exitCode: number, stderr: string}>}
  */
-export function spawnAndCollect(bin, args, spawnOptions, { bus, jobId, onSpawn, maxBufferBytes, onStdout }) {
+export function spawnAndCollect(bin, args, spawnOptions, { bus, jobId, onSpawn, maxBufferBytes, onStdout, onStderr }) {
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, spawnOptions);
 
@@ -157,6 +164,7 @@ export function spawnAndCollect(bin, args, spawnOptions, { bus, jobId, onSpawn, 
       }
       stderr += chunk;
       publishChunk("stderr", chunk);
+      onStderr?.(chunk);
     };
     child.stdout?.on("data", onStdoutData);
     child.stderr?.on("data", onStderrData);
@@ -223,7 +231,9 @@ export function spawnAndCollect(bin, args, spawnOptions, { bus, jobId, onSpawn, 
  * A single logical turn can span multiple `assistant` lines (one per content block, sharing
  * `message.id`) — this doesn't try to reassemble them into a full message; each is treated as
  * an independent progress tick, since the complete final answer is always available via the
- * terminal `result` line regardless.
+ * terminal `result` line regardless. The type/subtype classification itself lives in
+ * `classifyStreamJsonEvent()` (streamJsonParser.js) so debug mode's file-tail consumer can
+ * reuse the exact same decision without duplicating it.
  */
 export function createStreamJsonTracker({ bus, jobId }) {
   let remainder = "";
@@ -240,14 +250,10 @@ export function createStreamJsonTracker({ bus, jobId }) {
     for (const obj of parsed.objects) {
       if (obj.type === "result") {
         resultLine = obj;
-      } else if (obj.type === "system" && obj.subtype === "thinking_tokens") {
-        publishProgress({ phase: "thinking", progressMessage: `Thinking… (~${obj.estimated_tokens} tokens)` });
-      } else if (obj.type === "assistant") {
-        const textBlock = obj.message?.content?.find((block) => block.type === "text");
-        if (textBlock?.text) {
-          publishProgress({ phase: "responding", progressMessage: textBlock.text.slice(0, 200) });
-        }
+        continue;
       }
+      const progress = classifyStreamJsonEvent(obj);
+      if (progress) publishProgress(progress);
       // malformed lines (parsed.malformedLines) and any other type are silently skipped —
       // graceful recovery, per ADR-0002 Phase 4.
     }
@@ -271,14 +277,27 @@ export function createStreamJsonTracker({ bus, jobId }) {
  * @param {string} prompt
  * @param {import("../models/executionContext.js").ExecutionContext} context
  * @param {import("../config/index.js").DelegateConfig} config
- * @param {{signal?: AbortSignal, onSpawn?: () => void, bus?: object, jobId?: string}} [opts]
+ * @param {{signal?: AbortSignal, onSpawn?: () => void, bus?: object, jobId?: string, debugLaunchFn?: Function}} [opts]
  *   onSpawn fires once the OS has actually started the subprocess (Node's 'spawn' event) —
  *   used to mark a job "running" rather than merely "starting". `bus`/`jobId`, if given,
  *   publish OutputChunk and JobProgress events (ADR-0002) as stdout/stderr arrive — both
  *   optional so invoke() remains usable standalone (e.g. in tests) without a JobManager/bus.
+ *   `debugLaunchFn` is test-only dependency injection for Debug Mode's terminal-launch step
+ *   (see debugTerminalLauncher.js's `launchDebugTerminal`) — never used in production, where
+ *   `config.debugMode` is false by default.
  * @returns {Promise<{raw: string, parsed: import("../models/schemas.js").ClaudeCliResult | null, exitCode: number, stderr: string}>}
  */
-export async function invoke(prompt, context, config, { signal, onSpawn, bus, jobId } = {}) {
+export async function invoke(prompt, context, config, { signal, onSpawn, bus, jobId, debugLaunchFn } = {}) {
+  // Development-only, opt-in (DELEGATE_DEBUG=true) and additive: everything below this branch
+  // — the normal hidden-pipe spawn, its event publishing, cancellation, buffer limits — is
+  // completely unchanged and still runs when config.debugMode is false/absent, which is the
+  // default. A jobId is required (debug artifacts live under workspace/jobs/<job-id>/logs/);
+  // without one (e.g. invoke() called standalone in a test) this falls through to production
+  // behavior same as always.
+  if (config.debugMode && jobId) {
+    return invokeInDebugMode(prompt, context, config, { onSpawn, bus, jobId, launchFn: debugLaunchFn });
+  }
+
   const args = buildArgs(prompt, context);
   const { cwd, env, timeout } = buildExecOptions(context, config);
   const tracker = createStreamJsonTracker({ bus, jobId });

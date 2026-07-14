@@ -25,6 +25,9 @@ src/
   services/snapshotBuilder.js  immutable point-in-time metrics+activeJobs snapshots
   services/consumerRegistry.js  in-memory consumer registration/health/statistics bookkeeping
   services/streamJsonParser.js  incremental stream-json line parser (pure, reused by claudeCliService's tracker)
+  services/debugInvoke.js  Debug Mode (DELEGATE_DEBUG=true) execution path — visible terminal + full logs
+  services/debugTerminalLauncher.js  per-OS visible-terminal detection/launch, argv-safe (never shells the prompt)
+  debug/debugRunner.js   runs inside the visible terminal; reuses buildArgs/spawnAndCollect/parseResult
   models/schemas.js       zod input schema for delegate_task/delegate_submit (the public tool contract)
   models/executionContext.js  ExecutionContext shape + factory — the CLI service's only input besides prompt
   models/job.js            Job shape, status enum, phase/progress metadata, summarizeJob()/toJobView()
@@ -147,6 +150,60 @@ for the full evidence. `buildArgs()` always passes `--output-format stream-json 
   useful. Everything else (hook/session bookkeeping, rate-limit telemetry, the model's raw
   `thinking` content, and any unrecognized future shape like `tool_use`) is silently skipped,
   never guessed at.
+
+## Debug Mode (development only)
+
+Opt-in (`DELEGATE_DEBUG=true`, default off), entirely additive to `claudeCliService.invoke()` —
+when off (the default), `invoke()`'s existing hidden-pipe code path is untouched, byte-for-byte,
+which is why every pre-existing test still passes unmodified.
+
+**Why this needed care, not just code**: this whole project's one hard security invariant is
+that `prompt` (arbitrary, caller-controlled text) never touches a shell (see "Security: no
+shell in the CLI spawn" below). Opening a *visible terminal* naturally means invoking some
+terminal host (`wt.exe`, `cmd.exe`, a Linux emulator, `Terminal.app`) — exactly the kind of
+shell-adjacent surface that invariant exists to avoid. The design keeps the invariant intact
+structurally, not by convention:
+
+- **`debugTerminalLauncher.js`**: `buildLaunchInvocation()` is a pure function whose output
+  never includes the prompt — only a job id (`randomUUID()`, never user content) and
+  filesystem paths this process itself constructed. `launchDebugTerminal()` always spawns with
+  `shell: false`. Per OS: Windows Terminal (`wt.exe new-tab --`) preferred, `cmd.exe`'s
+  `start ""` (empty title — the documented idiom for avoiding `start` mistaking a spaced
+  program path for the title) as fallback; the detected Linux terminal emulator's `-e`/`--`
+  convention; `open -a Terminal --args` on macOS. Every one of these passes the launched
+  command as a real argv array, never a string a shell re-parses.
+- **`debug/debugRunner.js`**: runs *inside* the visible terminal, invoked as
+  `node debugRunner.js <path-to-invocation.json>` — its only argv is a file path, never the
+  prompt. Reads the prompt from `invocation.json` (written by `debugInvoke.js` before the
+  terminal opens), then reuses the exact same production building blocks (`buildArgs`,
+  `buildExecOptions`, `spawnAndCollect`, `parseResult`) to actually run `claude` — this is not
+  a second implementation of CLI invocation, only a differently-observed one. Tees stdout/stderr
+  to both the visible console and log files, incrementally parses stream-json (reusing
+  `parseStreamJsonChunk`) to write timestamped, ordered entries to `stream.jsonl`, and writes
+  `response.json`/`metadata.json` on completion — including on failure, so the parent's poll
+  never hangs. `environment` is never written to `invocation.json` (same redaction principle as
+  `context.json`): the runner inherits the real environment naturally, since it's a descendant
+  of the MCP server process, spawned with env inherited by default at every hop — functionally
+  identical to `createExecutionContext()`'s `environment: process.env`.
+- **`debugInvoke.js`**: `invokeInDebugMode()` creates `workspace/jobs/<job-id>/logs/`, writes
+  `prompt.txt` + `invocation.json`, launches the terminal, then polls for `response.json` (the
+  visible terminal's own host process returns almost immediately after requesting the window —
+  its lifetime isn't tied to a simple child-process `close` event the way a normal spawn would
+  be) while tailing `stream.jsonl` to keep publishing live `JobProgress` on the same
+  `RuntimeEventBus`, exactly like the hidden-pipe path does (`classifyStreamJsonEvent()`,
+  extracted from `createStreamJsonTracker` into `streamJsonParser.js`, is the shared decision
+  both paths reuse — not two implementations of "which events matter").
+
+**Known limitation, documented rather than glossed over**: because the actual `claude`
+subprocess is owned by a detached runner process (so a debug session survives an MCP server
+restart), `delegate_cancel` cannot forcibly kill it — cancelling only stops the parent from
+waiting, it doesn't close the visible terminal or its subprocess.
+
+**Verified live**, not just via mocked tests: a real `launchDebugTerminal()` call against a
+(deliberately nonexistent) `claudeBin` path was observed to genuinely open a terminal, run the
+runner, hit a real `ENOENT`, and correctly write `response.json` reflecting that failure — which
+is also how the "terminal closes itself instantly on fast completion" limitation was found and
+fixed (the runner now pauses for a keypress before exiting when attached to a real TTY).
 
 ## Observability
 

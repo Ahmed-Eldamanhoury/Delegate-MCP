@@ -33,3 +33,27 @@ export function parseStreamJsonChunk(remainder, chunk) {
 
   return { objects, malformedLines, remainder: newRemainder };
 }
+
+/**
+ * The pure "which stream-json event types matter for progress, and what to say about them"
+ * decision. Lives here (rather than in claudeCliService.js, where it's used by
+ * `createStreamJsonTracker`) so debug mode's file-tail consumer (`src/services/debugInvoke.js`
+ * tails `stream.jsonl`, written by `src/debug/debugRunner.js`) can reuse the exact same
+ * classification without a circular import between claudeCliService.js and debugInvoke.js.
+ * Same categories, same omissions as `createStreamJsonTracker`'s own doc comment describes —
+ * this is a shared building block, not a second decision.
+ * @param {object} obj one already-parsed stream-json line
+ * @returns {{phase: string, progressMessage: string}|null} null if this object isn't progress-worthy
+ */
+export function classifyStreamJsonEvent(obj) {
+  if (obj.type === "system" && obj.subtype === "thinking_tokens") {
+    return { phase: "thinking", progressMessage: `Thinking… (~${obj.estimated_tokens} tokens)` };
+  }
+  if (obj.type === "assistant") {
+    const textBlock = obj.message?.content?.find((block) => block.type === "text");
+    if (textBlock?.text) {
+      return { phase: "responding", progressMessage: textBlock.text.slice(0, 200) };
+    }
+  }
+  return null;
+}

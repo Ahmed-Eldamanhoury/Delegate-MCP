@@ -1,5 +1,53 @@
 # Changelog
 
+## [2.1.0] - 2026-07-14
+
+Debug Mode (development only) — new, opt-in capability. Production behavior is unchanged when
+`DELEGATE_DEBUG` is unset (the default) — every existing test still passes unmodified.
+
+### Added
+- **`DELEGATE_DEBUG=true`**: when set, `claudeCliService.invoke()` runs the real CLI
+  invocation inside a visible, native terminal window instead of a hidden pipe-captured
+  subprocess — Windows Terminal (falls back to `cmd.exe` if absent), the detected Linux
+  terminal emulator, or `Terminal.app` on macOS.
+- Full log set at `workspace/jobs/<job-id>/logs/`: `prompt.txt`, `command.txt`, `stdout.log`,
+  `stderr.log`, `stream.jsonl` (every stream-json event, timestamped, in arrival order),
+  `response.json`, `metadata.json`.
+- The visible terminal displays a banner with the exact command, working directory, model,
+  tools, and budget before running, and pauses ("Press Enter to close...") after finishing so
+  fast-completing jobs' output doesn't vanish the instant the window would otherwise
+  auto-close — found via a real live test, not assumed.
+- Live progress notifications (the same `notifications/progress` behavior production already
+  has) keep working in Debug Mode too: the parent process tails `stream.jsonl` and republishes
+  `JobProgress` exactly as the hidden-pipe path does.
+- New files: `src/services/debugTerminalLauncher.js`, `src/services/debugInvoke.js`,
+  `src/debug/debugRunner.js`.
+- 26 new tests covering: per-OS terminal detection, argv-safety (the prompt is structurally
+  never part of any terminal-launch command line — verified, not just documented), Debug
+  OFF/ON branching in `invoke()`, log-file creation and content, live stream-tailing and
+  JobProgress publishing, timeout handling, and the runner's own log-writing logic (chunk
+  reassembly, ordering, timestamps, failure handling).
+
+### Security note
+The core invariant this project has maintained throughout (`prompt` never touches a shell) is
+preserved in Debug Mode: no terminal-launch command line ever contains the prompt text — only
+job ids and filesystem paths this process itself constructed. The prompt reaches the actual
+`claude` invocation solely via `invocation.json`, read by the runner script, which spawns
+`claude.exe` the same shell-free way production always has. Full reasoning in
+`src/services/debugTerminalLauncher.js`'s header comment and
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#debug-mode-development-only).
+
+### Known limitation
+`delegate_cancel` cannot forcibly stop a Debug Mode job — the actual subprocess is owned by a
+detached runner process (so a debug session survives if the MCP server restarts), so there is
+no direct process handle to kill from the main server. The visible terminal must be closed
+manually to actually stop it.
+
+### Compatibility
+Zero MCP schema change — this wave didn't need to re-verify Inspector, since nothing about the
+6 tools' schemas changed; re-verified anyway as part of full validation. 171/171 tests passing
+(145 pre-existing, unmodified, + 26 new).
+
 ## [2.0.0] - 2026-07-13
 
 Official "v1.0.0" release milestone — release engineering only, no functional change.

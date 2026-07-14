@@ -40,7 +40,17 @@ export const DEFAULT_MAX_WORKSPACE_HISTORY = 100;
  * @property {number} maxJobHistory
  * @property {string} workspaceRoot
  * @property {number} maxWorkspaceHistory
+ * @property {boolean} debugMode
  */
+
+/**
+ * Development-only: when true, claudeCliService.invoke() additionally opens a visible terminal
+ * running the real CLI invocation and writes full stream logs to
+ * workspace/jobs/<job-id>/logs/. Off by default; absent/anything-but-"true" leaves production
+ * behavior byte-identical to before this existed — see docs/ARCHITECTURE.md's Debug Mode
+ * section.
+ */
+export const DEBUG_MODE_ENV_VAR = "DELEGATE_DEBUG";
 
 /** @param {NodeJS.ProcessEnv} env @returns {DelegateConfig} */
 export function loadConfig(env = process.env) {
@@ -56,5 +66,6 @@ export function loadConfig(env = process.env) {
     workspaceRoot: env.CLAUDE_DELEGATE_WORKSPACE_DIR || DEFAULT_WORKSPACE_ROOT,
     maxWorkspaceHistory:
       Number(env.CLAUDE_DELEGATE_MAX_WORKSPACE_HISTORY) || DEFAULT_MAX_WORKSPACE_HISTORY,
+    debugMode: env[DEBUG_MODE_ENV_VAR] === "true",
   });
 }
