@@ -12,6 +12,9 @@ jobs:
   analyze:
     runs-on: ubuntu-latest
     permissions:
+      # actions:read is required specifically for private repos so `analyze` can resolve
+      # the workflow run -- see github/codeql-action's own generated template.
+      actions: read
       contents: read
       security-events: write
     steps:
