@@ -1,161 +1,153 @@
-# Sprint Report — Production Validation of Claude Delegate MCP
+# Sprint Report — Critical Stability Sprint
 
-**Branch:** `feature/production-validation-self-harness`
-**Worktree:** `.claude/worktrees/feature+production-validation-self-harness`
-**Dates:** 2026-07-14 (single session)
-**Scope:** Three verified, previously-documented defects fixed end-to-end (plan →
-implementation → review → fix → re-review → docs → final review) while deliberately
-exercising `delegate_task`, `delegate_submit`, Workspace, Streaming, Observability, and
-Debug Mode as real production tooling, not a demo.
+**Branch:** `worktree-critical-stability-sprint`
+**Base:** `c1f3c72` (main, pushed to origin before this worktree was created)
+**Date:** 2026-07-14 (same session as the prior production-validation sprint)
+**Framing:** the user explicitly requested this document double as the sprint's
+**Stability Report** — see the "What was improved / fixed" sections below for that
+framing; separate [REVIEW_REPORT.md](REVIEW_REPORT.md),
+[VALUE_REPORT.md](VALUE_REPORT.md), and [PERFORMANCE_REPORT.md](PERFORMANCE_REPORT.md)
+cover review findings, the Delegate MCP evaluation, and timing/cost data respectively.
 
-This document is the factual ledger the sprint's objectives asked for: every delegated
-task, execution time, approvals required, interruptions, failures, retries, parallel
-execution, and artifacts generated. Evaluation and recommendations are in
-[PRODUCTION_EVALUATION.md](PRODUCTION_EVALUATION.md) and
-[DELEGATE_VALUE_REPORT.md](DELEGATE_VALUE_REPORT.md) — this file states only what
-happened, with evidence.
+This report supersedes the prior sprint's `SPRINT_REPORT.md` (that sprint's production-
+validation record is preserved in git history at commit `c1f3c72` and referenced by name
+throughout this document and its siblings).
 
-## Setup
+## Scope, as explicitly redefined by the user mid-sprint
 
-- Worktree created via the native `EnterWorktree` tool, branched from `origin/main`
-  after confirming local `main` (which carried unpushed v2.1.0 Debug Mode work) was
-  pushed first — otherwise the worktree would have silently missed Debug Mode entirely.
-  `EnterWorktree` sanitized the requested branch name to
-  `worktree-feature+production-validation-self-harness`; renamed via `git branch -m` to
-  match the user's exact requested name, `feature/production-validation-self-harness`.
-- Baseline: 171/171 tests passing at the branch point (`9f2e9df`, v2.1.0 tag-equivalent).
+The original ask offered a broader menu (crash fix + 4 mechanical cleanups + 4
+coverage tasks). The user redirected to a narrower, explicit **"Critical Stability
+Sprint"**:
 
-## Delegated Tasks — What Ran, How, and What It Cost
+> Fix only verified High-severity defects that can affect production stability.
+> Investigate and resolve the reproduced Debug Mode server-crash issue. Investigate the
+> duplicate server.js problem and implement the safest solution only if it can be
+> completed without changing frozen public contracts. Otherwise produce an ADR and stop.
+> ... Do NOT include: refactoring, code cleanup, simplifications, package-lock updates,
+> coverage improvements, Node version policy changes, dead-code removal, housekeeping.
 
-| # | Task | Mechanism | Model / Effort | Result | Runtime | Cost |
-|---|------|-----------|-----------------|--------|---------|------|
-| 1 | ConsumerRegistry `pruneStale()` | `delegate_submit` | unrecorded (job lost — see Failures) | Commit `b1aeaad` landed; task-reviewer approved | **unrecoverable** — job metadata lost | **unrecoverable** |
-| 2 | MetricsCollector artifact-count filter | native `Agent` tool | session default | Commit `d64748c`→cherry-picked as `63d596a`; task-reviewer approved | not tracked by MCP (native tool call) | not tracked by MCP (native tool call) |
-| 3 (attempt 1) | Debug Mode `delegate_cancel` | `delegate_task` | opus | **Timed out** (`MCP error -32001`), no server-side job ever visible | n/a | n/a |
-| 3 (attempt 2) | Debug Mode `delegate_cancel` | `delegate_submit` | opus / medium | Commit `95d81d1`; task-reviewer found 1 Important finding | **489,643 ms** (8 min 9.6 s) | **$2.63851** |
-| 3 (fix) | Abort-listener leak fix | native `Agent` tool | session default | Commit `420b663`; re-review approved | not tracked by MCP (native tool call) | not tracked by MCP (native tool call) |
-| — | Sequential-call verification (systematic-debugging) | `delegate_submit` | haiku | "PONG" — confirms calls work when issued alone | 11,453 ms | $0.0206568 |
-| — | Sequential-call verification #2 | `delegate_submit`→`delegate_status` | haiku | Confirmed job traceable when issued alone | 13,978 ms | $0.0273309 |
+Every artifact in this sprint was scoped against that instruction; the final whole-branch
+review specifically checked for scope creep and found none (see
+[REVIEW_REPORT.md](REVIEW_REPORT.md)).
 
-Timing/cost for rows marked "unrecoverable" or "not tracked by MCP" is not fabricated —
-`delegate_history` was queried fresh while writing this report and genuinely does not
-contain a Task 1 job or any record for the native-`Agent`-tool dispatches (Task 2,
-Task 3's fix). The two haiku verification jobs above are the only other entries
-`delegate_history` returned this session, confirming Task 1's job record is gone, not
-merely unread.
+## Audit — how the two findings were surfaced
 
-## The Central Failure: Concurrent MCP Dispatch Broke Job Tracking
+Three read-only audit agents were dispatched **in parallel** via the native `Agent` tool
+(not `delegate_*` — see [VALUE_REPORT.md](VALUE_REPORT.md) for why), covering: (1)
+re-verification of 4 findings deferred from the prior sprint's `ponytail-audit` pass, (2)
+a fresh correctness/security sweep of the two most recently landed subsystems, (3) test
+coverage and CI/config hygiene. Full timing in
+[PERFORMANCE_REPORT.md](PERFORMANCE_REPORT.md).
 
-Tasks 1, 2, and 3 (attempt 1) were dispatched **in the same message** — `delegate_submit`
-for Task 1, `delegate_task` for Task 3, and the native `Agent` tool for Task 2 — following
-`dispatching-parallel-agents`' guidance, since the three tasks touch disjoint files and are
-genuinely independent.
+The fresh correctness/security sweep produced the sprint's headline finding:
 
-**Observed:** `delegate_task` (Task 3, attempt 1) timed out with `MCP error -32001:
-Request timed out`, and no corresponding job ever appeared via `delegate_status` or
-`delegate_history`. Task 1's `delegate_submit` call did return a job id (`c6b5e636...`),
-but that job became untraceable via `delegate_status`/`delegate_history` within moments —
-consistent with what `delegate_history` shows now: no Task 1 job exists in the record at
-all.
+> **[High, reproduced]** Debug Mode's terminal launcher never attaches an `"error"`
+> listener to its spawned child process. An async spawn failure fires an unhandled
+> `"error"` event, which Node treats as an uncaught exception — crashing the entire MCP
+> server, every in-flight job included. The auditing agent reproduced this directly on
+> this machine by forcing a spawn against a nonexistent binary.
 
-**Root cause** (via `systematic-debugging`, Phase 1 — Root Cause Investigation): two
-independent `node.exe` processes were both running `claude-delegate-mcp\server.js`
-simultaneously (confirmed via
-`Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Select ProcessId,CommandLine`
-— PIDs 9868 and 32788). Each server instance holds its own in-memory `JobManager`, so a
-job created against one instance is invisible to a `delegate_status`/`delegate_history`
-call that happens to land on the other. This is a real, reproducible environmental
-condition, not a guess — `netstat`/process listing confirmed the duplicate directly.
+and confirmed, via direct code reading (no lockfile/PID/port-bind check anywhere in
+`src/cli/entry.js`'s startup path), the root-cause candidates for the concurrent-dispatch
+job-tracking-loss limitation documented in the prior sprint.
 
-**Verification of the workaround:** issuing `mcp__claude-delegate__*` calls one at a time
-rather than batched in one message worked correctly every time this session — the two
-haiku "PONG"/status-check calls above, and Task 3's eventual `delegate_submit` (issued
-alone), all completed and remained traceable.
+## What was improved
 
-**Status at time of writing this report:** re-checked the running `node.exe` processes;
-only **one** `server.js` instance is running now (PID 9868). The duplicate present
-earlier is gone. This points to a stale/orphaned server process (e.g., left over from a
-prior Claude Desktop restart that didn't terminate its old MCP server child) rather than
-a structural defect that reproduces on every launch — but it is a real operational hazard
-regardless: nothing in the current architecture prevents two server instances from
-running concurrently and silently splitting job state between them. See
-[DELEGATE_VALUE_REPORT.md](DELEGATE_VALUE_REPORT.md) for how this weighs on the
-recommendation.
+1. **Debug Mode terminal-launcher crash fixed** — `src/services/debugTerminalLauncher.js`
+   now attaches `child.once("error", () => {})` right after spawning the terminal
+   process. A launch failure now surfaces as a normal job timeout instead of taking the
+   whole server down. One new regression test (`tests/debugTerminalLauncher.test.js`)
+   using a real `EventEmitter` to prove the crash mechanism is actually defused, not just
+   assumed fixed.
+2. **`ADR-0004: Server Instance Lifecycle`** written — a rigorous, independently-verified
+   investigation into the duplicate-instance problem (see What defects were discovered
+   below), recommending a specific future fix (`stdin`-close self-shutdown) while
+   explicitly declining to implement it without first verifying real MCP-host
+   process-lifecycle behavior — a live-session-disrupting experiment intentionally not
+   run mid-sprint.
+3. **`docs/releases/KNOWN_LIMITATIONS.md` gained its first-ever entry for the
+   concurrent-dispatch/duplicate-instance limitation** — it existed only in the prior
+   sprint's own `SPRINT_REPORT.md`/`DELEGATE_VALUE_REPORT.md` before this sprint, not in
+   the project's canonical release-facing doc. Now cross-referenced to ADR-0004.
+4. Version bumped 2.2.0 → **2.2.1** (patch: pure bug fix, no new capability), with a
+   corresponding `CHANGELOG.md` entry.
 
-**No code changed in response to this finding.** It is an environment/process-lifecycle
-issue, not a code defect in `claude-delegate-mcp`'s job-tracking logic itself (a single
-server instance tracked every job correctly, including under the sequential
-`delegate_submit`→`delegate_status` verification). Documented as evidence, not patched
-around.
+## What defects were discovered
 
-## Approvals Required / Developer Interruptions
+- **[High, reproduced, fixed]** The terminal-launcher crash above.
+- **[Medium, confirmed via code reading, not reproduced live, documented not fixed]** No
+  guard exists against multiple `server.js` instances; the MCP SDK's
+  `StdioServerTransport` never detects its own `stdin` closing to self-shut-down. This is
+  the confirmed root-cause candidate for the concurrent-dispatch job-tracking-loss
+  problem from the prior sprint. Not reproduced live this sprint (doing so would mean
+  disrupting the actual MCP connection this session runs on) — confidence comes from
+  direct reading of both `src/cli/entry.js` and the vendored MCP SDK's `stdio.js`,
+  independently re-verified by the task reviewer against the same source files.
+- Three other Low-severity items surfaced by the audit (a hand-rolled recursive
+  directory walker, a single-use wrapper module, a dead options field, a
+  single-subclass error base class — all in pre-existing code, all previously flagged
+  once already in the prior sprint's deferred `ponytail-audit` findings) were
+  **deliberately not pursued this sprint** — they are cleanup/simplification, explicitly
+  out of scope per the user's Critical Stability Sprint instruction. They remain
+  candidates for a future Cleanup Sprint.
 
-- Two `AskUserQuestion` exchanges before any implementation work began: (1) what to apply
-  this wave's skill-driven process to (the user supplied the full sprint objective
-  verbatim), and (2) explicit worktree/branch/merge-gate authorization (exact branch name,
-  and the six-condition merge gate this report exists to satisfy).
-- **Zero interruptions during execution.** All three tasks, all task reviews, the fix
-  cycle, doc reconciliation, the final whole-branch review, and all three ponytail passes
-  ran autonomously in one continuous session, per `subagent-driven-development`'s
-  continuous-execution principle — no "should I continue?" checkpoints.
+## What defects were fixed
 
-## Failures and Retries
+Exactly one: the Debug Mode terminal-launcher crash. This was the sprint's only
+functional code change. The duplicate-instance problem was investigated and documented
+(ADR-0004), not fixed — a deliberate choice, not an oversight, per the reasoning in
+ADR-0004 itself and this sprint's explicit "ADR and stop" instruction for anything not
+safely implementable without guessing at unverified behavior.
 
-1. **Task 3 dispatch retry** — `delegate_task` timeout (see above) → re-dispatched via
-   `delegate_submit` alone → succeeded. Root-caused before retrying, not blindly retried.
-2. **Task 3 review finding → fix → re-review cycle** — first task-reviewer pass found one
-   Important finding (an `AbortSignal` listener leak in `debugInvoke.js`'s poll loop: every
-   non-aborted iteration left a dangling `once`-listener attached, since `{once: true}`
-   only self-removes on fire, not on the competing `setTimeout` winning). Fix dispatched to
-   a native `Agent` (commit `420b663`, added a real regression test using
-   `node:events`' `getEventListeners`), re-reviewed, approved.
-3. **Task 2 worktree mismatch** — passing `isolation: "worktree"` to the `Agent` tool call
-   for Task 2 caused the Agent tool's own auto-worktree mechanism to create a *separate*
-   worktree (`.claude/worktrees/agent-a63b84b81c5fb4fcb`, branch
-   `worktree-agent-a63b84b81c5fb4fcb`) instead of using the already-prepared shared
-   worktree. The subagent caught this itself, verified the target files were
-   byte-identical between branches before proceeding, and flagged it explicitly in its
-   report (see `sdd/task-2-report.md`'s "Environment note"). Resolved by fetching that
-   branch and cherry-picking its commit (`d64748c` → `63d596a`) onto the correct branch —
-   a controller-side mistake (mine), not an MCP-server or subagent defect.
-4. **Task 1's report never got written** — its `delegate_submit` session appears to have
-   been cut short after committing (`b1aeaad` exists and is correct; no
-   `sdd/task-1-report.md` was ever produced). Worked around by reading `git show b1aeaad`
-   directly and handing that diff to the task-reviewer instead of a self-authored report,
-   with the missing report flagged to the reviewer as a process observation.
+## Approvals required / developer interruptions
 
-## Parallel Execution
+Two, both genuine judgment calls, not busywork:
+1. Sprint-scope selection (the user chose to redefine the scope entirely rather than
+   pick one of the three offered options — a real design decision, not friction).
+2. Permission to push local `main` (9 commits ahead of `origin/main` from the prior
+   sprint) to origin before creating this sprint's worktree, so `EnterWorktree`'s
+   `origin/main`-based default wouldn't silently drop the prior sprint's work. Per this
+   session's own safety rules, pushing to a remote requires explicit confirmation each
+   time regardless of prior approvals.
 
-Attempted genuinely (3 independent tasks, 1 message, per `dispatching-parallel-agents`).
-**Partially succeeded**: the native `Agent` tool call (Task 2) and one MCP call
-(Task 1's `delegate_submit`, which did create a job) both fired; the other MCP call
-(Task 3's `delegate_task`) failed outright. The failure mode (see Central Failure above)
-is specific to firing multiple `delegate_*` MCP tool calls in the same turn against a
-server with more than one running instance — it is not a general failure of parallel
-subagent dispatch (the native `Agent` tool call in the same batch worked fine).
+Zero interruptions during actual execution — both tasks, both task reviews, the
+whole-branch review, and the ponytail passes ran without a checkpoint, per
+`subagent-driven-development`'s continuous-execution principle.
 
-## Artifacts Generated
+## Failures and retries
 
-**Commits** (8, on `feature/production-validation-self-harness`, merge-base `9f2e9df`):
-`142380b` (plan doc) → `b1aeaad` (Task 1) → `63d596a` (Task 2, cherry-picked) →
-`95d81d1` (Task 3) → `420b663` (Task 3 fix) → `0c879f1` (docs + version bump) →
-`441f811` (freeze-doc clarification) → `3c3e1ba` (ponytail-review simplification).
+None. Both tasks landed clean on their first implementer dispatch, no `BLOCKED` status,
+no worktree mismatches (unlike the prior sprint's Task 2). One review-driven addition
+(not a "fix" — Task 2's ADR gained one paragraph in its Alternatives section after the
+reviewer flagged a missing middle-ground option) was applied directly by the controller
+rather than a full fix-and-re-review cycle, since it was a one-paragraph doc addition
+with no risk profile requiring a fresh subagent dispatch.
 
-**Tests:** 171 → 178 (7 new: 3 `consumerRegistry.test.js`, 1 `metricsCollector.test.js`,
-3 across `debugInvoke.test.js`/`debugRunner.test.js` including the leak regression test).
-178/178 passing, verified fresh multiple times through the sprint.
+## Parallel execution
 
-**SDD process artifacts** (`.git/worktrees/feature+production-validation-self-harness/sdd/`
-and `<worktree>/sdd/`): 3 task briefs, 2 implementer reports (Task 1's is missing — see
-Failures #4), 5 review-package diff files, 1 progress ledger (`progress.md`).
+The three audit agents ran genuinely concurrently (dispatched via the native `Agent`
+tool in one message, `run_in_background: true`), each read-only and touching disjoint
+concerns — no conflicts. The two implementation tasks were dispatched **sequentially**,
+correctly following `subagent-driven-development`'s "never dispatch multiple
+implementation subagents in parallel" rule (Task 2 depended on nothing from Task 1, but
+the rule is about avoiding conflicts on a shared workspace, not proving independence).
 
-**Reviews:** 3 per-task spec+quality reviews (all Approved, one after a fix cycle), 1
-re-review (Task 3 fix), 1 whole-branch review (Ready to merge, one Minor finding — fixed),
-1 `ponytail-review` pass (one finding — fixed), 1 `ponytail-audit` pass (4 findings in
-pre-existing, previously-certified code — deferred as recommendations, not applied, to
-avoid unauthorized scope expansion on frozen/certified code), 1 `ponytail-debt` pass (clean
-ledger, no `ponytail:` markers exist in the repo).
+## Artifacts generated
 
-**Docs updated:** `CHANGELOG.md` (new 2.2.0 entry), `README.md`, `docs/ARCHITECTURE.md`,
-`docs/OBSERVABILITY_FREEZE.md`, `docs/releases/KNOWN_LIMITATIONS.md`, `package.json`
-(2.1.0 → 2.2.0).
+**Commits** (6, `c1f3c72..9da6746`): plan doc → crash fix → ADR-0004 → ADR alternatives
+addition → version bump + doc reconciliation → (this report and its siblings, next).
+
+**Tests:** 178 → 179 (1 new regression test). 179/179 passing, verified fresh at every
+checkpoint (after each task, after the whole-branch review, after doc reconciliation).
+
+**Reviews:** 2 task-scoped reviews (Task 1 code: Approved, no findings; Task 2 ADR:
+Approved after one Minor completeness addition), 1 whole-branch review (Ready to merge,
+no findings), 1 `ponytail-review` pass (nothing to cut — the fix is already minimal), 1
+scoped `ponytail-audit` pass (deliberately not repo-wide this time, since the sprint's
+own rules exclude acting on cleanup findings — the full repo-wide sweep from the top of
+this sprint remains the record for a future Cleanup Sprint).
+
+**Docs updated:** `CHANGELOG.md` (new 2.2.1 entry), `docs/releases/KNOWN_LIMITATIONS.md`
+(crash fix added to "Resolved," duplicate-instance limitation added for the first time),
+`package.json` (2.2.0 → 2.2.1). `README.md` and `docs/ARCHITECTURE.md` deliberately left
+untouched — the fix changes no documented behavior, confirmed rather than assumed.
