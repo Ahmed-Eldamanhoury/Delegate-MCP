@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, existsSync, readFileSync, appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getEventListeners } from "node:events";
 import { invokeInDebugMode } from "../src/services/debugInvoke.js";
 import { createRuntimeEventBus } from "../src/services/runtimeEventBus.js";
 import { EVENT_TYPES } from "../src/models/runtimeEvent.js";
@@ -186,6 +187,33 @@ test("aborting an in-flight call rejects promptly with an AbortError-shaped erro
       existsSync(join(logsDir, "cancel.request")),
       "cancel.request sentinel must be written on abort so the detached runner can kill its child"
     );
+  } finally {
+    rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test("does not accumulate abort listeners on the signal across poll iterations when never aborted", async () => {
+  const workspaceRoot = mkdtempSync(join(tmpdir(), "debug-invoke-"));
+  try {
+    const jobId = "job-listener-leak";
+    const { config, context } = baseArgs(workspaceRoot, jobId);
+    // Several 200ms poll intervals will elapse before this budget is exhausted, and the signal
+    // is never aborted — each iteration must clean up its own listener rather than piling them up.
+    const shortContext = { ...context, timeoutMs: 700 };
+    const controller = new AbortController();
+
+    const launchFn = () => ({ terminalKind: "cmd" }); // never writes response.json
+
+    await assert.rejects(
+      () => invokeInDebugMode("p", shortContext, config, { jobId, launchFn, signal: controller.signal }),
+      (err) => {
+        assert.equal(err.code, "DEBUG_TIMEOUT");
+        return true;
+      }
+    );
+
+    const remaining = getEventListeners(controller.signal, "abort").length;
+    assert.ok(remaining <= 1, `abort listeners must not accumulate across poll iterations, found ${remaining}`);
   } finally {
     rmSync(workspaceRoot, { recursive: true, force: true });
   }

@@ -95,9 +95,19 @@ export async function invokeInDebugMode(prompt, context, config, { signal, onSpa
       return JSON.parse(readFileSync(responsePath, "utf8"));
     }
     // Wake early on abort instead of waiting out the full poll interval, so cancellation is prompt.
+    // Both exit paths tear down the *other* path's registration — otherwise, since `{ once: true }`
+    // only self-removes when the event actually fires, every non-aborted iteration would leave a
+    // dangling abort listener on `signal` for the rest of the job's life.
     await new Promise((resolve) => {
-      const t = setTimeout(resolve, POLL_INTERVAL_MS);
-      signal?.addEventListener("abort", () => { clearTimeout(t); resolve(); }, { once: true });
+      const onAbort = () => {
+        clearTimeout(t);
+        resolve();
+      };
+      const t = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, POLL_INTERVAL_MS);
+      signal?.addEventListener("abort", onAbort, { once: true });
     });
   }
   if (signal?.aborted) return abortDebugJob();
