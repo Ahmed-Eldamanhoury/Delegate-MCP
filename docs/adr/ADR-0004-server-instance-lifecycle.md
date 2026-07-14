@@ -80,6 +80,15 @@ standard for when to stop at an ADR instead of shipping code.
   instance — so a global lock would block legitimate concurrent multi-window usage, a real
   regression, in order to guard against a narrower problem (stale instances) that a lock
   does not actually target correctly.
+- **Liveness-checked PID file** (a middle ground: record the PID on startup, and a new
+  instance checks whether the recorded PID is still alive before deciding whether to
+  proceed): unlike a naive global lock, this only reaps genuinely *dead* PIDs and would
+  not block legitimate concurrent live windows. Not pursued in this ADR because it still
+  requires the same unverified assumption the Decision above is deferring on — reliably
+  detecting "is that PID still my old server" cross-platform (especially PID reuse by
+  the OS) is its own source of subtle bugs, and `stdin`-close self-shutdown is the more
+  direct fix for the actual defect (an orphan that should have exited) rather than a
+  workaround for one that didn't.
 - **`stdin`-close self-shutdown** (reusing `shutdown()`): recommended as the leading
   candidate for a future wave, pending verification of actual Claude Desktop / MCP-host
   child-process lifecycle behavior on Windows, per Decision above.
