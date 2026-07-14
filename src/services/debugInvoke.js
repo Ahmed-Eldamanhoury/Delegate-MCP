@@ -5,15 +5,16 @@
  * (`debugTerminalLauncher.js` + `src/debug/debugRunner.js`) instead of a hidden pipe-captured
  * subprocess, and writes a full log set to `workspace/jobs/<job-id>/logs/`.
  *
- * Known limitation, documented rather than silently glossed over: because the actual `claude`
- * subprocess is owned by a detached runner process (so the debug session survives if the MCP
- * server restarts mid-run), `delegate_cancel` cannot forcibly kill it the way production's
- * AbortController does — cancelling here only stops this function from waiting, it does not
- * close the visible terminal or its subprocess.
+ * Cancellation: because the actual `claude` subprocess is owned by a detached runner process
+ * (so the debug session survives if the MCP server restarts mid-run), this function has no
+ * direct handle to kill it. On `signal` abort it writes a `cancel.request` sentinel that the
+ * runner polls for and turns into its own kill — see docs/ARCHITECTURE.md's Cancellation
+ * section for the full path.
  */
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
 import { getWorkspaceRoot } from "./workspaceManager.js";
 import { launchDebugTerminal } from "./debugTerminalLauncher.js";
 import { classifyStreamJsonEvent } from "./streamJsonParser.js";
@@ -94,21 +95,10 @@ export async function invokeInDebugMode(prompt, context, config, { signal, onSpa
       tailStreamJsonl(); // catch anything written between the last tail and completion
       return JSON.parse(readFileSync(responsePath, "utf8"));
     }
-    // Wake early on abort instead of waiting out the full poll interval, so cancellation is prompt.
-    // Both exit paths tear down the *other* path's registration — otherwise, since `{ once: true }`
-    // only self-removes when the event actually fires, every non-aborted iteration would leave a
-    // dangling abort listener on `signal` for the rest of the job's life.
-    await new Promise((resolve) => {
-      const onAbort = () => {
-        clearTimeout(t);
-        resolve();
-      };
-      const t = setTimeout(() => {
-        signal?.removeEventListener("abort", onAbort);
-        resolve();
-      }, POLL_INTERVAL_MS);
-      signal?.addEventListener("abort", onAbort, { once: true });
-    });
+    // Wake early on abort instead of waiting out the full poll interval, so cancellation is
+    // prompt. node:timers/promises' setTimeout manages its own abort-listener lifecycle, so
+    // there's no listener to leak across iterations the way a hand-rolled wait would.
+    await delay(POLL_INTERVAL_MS, undefined, { signal }).catch(() => {});
   }
   if (signal?.aborted) return abortDebugJob();
 
