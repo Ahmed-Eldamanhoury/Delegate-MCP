@@ -52,5 +52,18 @@ export function createConsumerRegistry() {
     return { activeCount: consumers.size, totalRegistered };
   }
 
-  return Object.freeze({ register, unregister, touch, list, getHealth, getStatistics });
+  /** Removes every consumer last seen more than maxAgeMs ago. @param {number} maxAgeMs @returns {number} count removed */
+  function pruneStale(maxAgeMs) {
+    const cutoff = Date.now() - maxAgeMs;
+    let removed = 0;
+    for (const consumer of consumers.values()) {
+      if (Date.parse(consumer.lastSeenAt) < cutoff) {
+        consumers.delete(consumer.id);
+        removed += 1;
+      }
+    }
+    return removed;
+  }
+
+  return Object.freeze({ register, unregister, touch, list, getHealth, getStatistics, pruneStale });
 }

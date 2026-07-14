@@ -111,6 +111,42 @@ test("regression: mutating the caller's original metadata object after register(
   assert.equal(registry.list()[0].metadata.transport, "http");
 });
 
+test("pruneStale removes a consumer whose lastSeenAt is older than maxAgeMs, keeps a fresh one", async () => {
+  const registry = createConsumerRegistry();
+  const stale = registry.register("stale");
+  await new Promise((r) => setTimeout(r, 20));
+  registry.register("fresh");
+
+  const removed = registry.pruneStale(10);
+
+  assert.equal(removed, 1);
+  const list = registry.list();
+  assert.equal(list.length, 1);
+  assert.equal(list[0].name, "fresh");
+  assert.equal(registry.getHealth(stale.id).active, false);
+});
+
+test("pruneStale returns 0 and removes nothing when no consumer is older than maxAgeMs", () => {
+  const registry = createConsumerRegistry();
+  registry.register("fresh");
+
+  const removed = registry.pruneStale(60_000);
+
+  assert.equal(removed, 0);
+  assert.equal(registry.list().length, 1);
+});
+
+test("pruneStale updates getStatistics().activeCount but never decrements totalRegistered", async () => {
+  const registry = createConsumerRegistry();
+  registry.register("stale");
+  await new Promise((r) => setTimeout(r, 20));
+  registry.register("fresh");
+
+  registry.pruneStale(10);
+
+  assert.deepEqual(registry.getStatistics(), { activeCount: 1, totalRegistered: 2 });
+});
+
 test("exposes no transport/execution methods — pure bookkeeping only", () => {
   const registry = createConsumerRegistry();
   for (const forbidden of ["send", "publish", "broadcast", "connect", "emit"]) {
