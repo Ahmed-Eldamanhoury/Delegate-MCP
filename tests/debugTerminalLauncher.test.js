@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { detectTerminal, buildLaunchInvocation, launchDebugTerminal } from "../src/services/debugTerminalLauncher.js";
 
 const PATHS = {
@@ -61,7 +62,7 @@ for (const kind of ["windows-terminal", "cmd", "macos-terminal", "linux-terminal
 
 test("launchDebugTerminal spawns with shell:false and detached:true, and unrefs the child", () => {
   let capturedCall = null;
-  const fakeChild = { unref: () => {}, unrefCalled: false };
+  const fakeChild = { unref: () => {}, once: () => {}, unrefCalled: false };
   fakeChild.unref = () => {
     fakeChild.unrefCalled = true;
   };
@@ -76,4 +77,21 @@ test("launchDebugTerminal spawns with shell:false and detached:true, and unrefs 
   assert.equal(capturedCall.options.detached, true);
   assert.equal(fakeChild.unrefCalled, true);
   assert.equal(result.terminalKind, "cmd"); // pathExists stubbed to report wt.exe absent
+});
+
+test("launchDebugTerminal attaches an error listener so an async spawn failure never crashes the process", () => {
+  const fakeChild = new EventEmitter();
+  fakeChild.unref = () => {};
+  const spawnFn = () => fakeChild;
+
+  launchDebugTerminal({ ...PATHS, spawnFn, platform: "win32", pathExists: () => false });
+
+  // Without an "error" listener attached, emitting "error" on an EventEmitter with no
+  // listener throws synchronously (Node's special-cased behavior for the "error" event) --
+  // exactly what happens when a real ChildProcess's underlying spawn fails asynchronously
+  // (e.g. ENOENT for a stale/broken terminal binary) and nothing is listening. That would
+  // crash the whole MCP server process, taking down every other in-flight job with it.
+  assert.doesNotThrow(() => {
+    fakeChild.emit("error", new Error("spawn wt.exe ENOENT"));
+  });
 });

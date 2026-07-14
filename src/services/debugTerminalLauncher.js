@@ -102,6 +102,13 @@ export function launchDebugTerminal({
   const terminal = detectTerminal(platform, pathExists);
   const { command, args } = buildLaunchInvocation(terminal, { nodeExe, runnerScriptPath, invocationJsonPath, jobId });
   const child = spawnFn(command, args, { shell: false, detached: true, stdio: "ignore" });
+  // A terminal-launch spawn failure (stale/broken binary, permissions, AV interference) fires
+  // asynchronously as an "error" event on the child. With no listener, Node treats an
+  // unhandled "error" event as an uncaught exception -- crashing the whole MCP server
+  // process, including every other in-flight job, not just this debug job. Swallow it here
+  // instead; invokeInDebugMode()'s existing response.json poll loop already times this job
+  // out safely (DEBUG_TIMEOUT) if the terminal never actually opens.
+  child.once("error", () => {});
   child.unref();
   return { terminalKind: terminal.kind, command, args };
 }
