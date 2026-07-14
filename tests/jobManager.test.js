@@ -98,8 +98,9 @@ test("a job exposes phase/progressMessage through starting -> running -> complet
   // intermittently on Linux CI while always passing locally on Windows, with runtimeMs
   // reading fractionally under 20. The test's actual intent (per the comment at the top of
   // this test) is only to prove a real, non-synchronous async gap was measured, not to pin
-  // an exact millisecond floor -- ">0" verifies that without the timing race.
-  assert.ok(job.runtimeMs > 0);
+  // an exact millisecond floor. ">= 10" keeps meaningful signal (still well under the ~18-19ms
+  // actually observed) without the timing race a tight ">= 20" bound created.
+  assert.ok(job.runtimeMs >= 10);
 });
 
 test("a store failure during the starting transition surfaces as a failed job, not an unhandled rejection", async () => {
