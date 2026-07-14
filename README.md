@@ -43,9 +43,9 @@ when unset, behavior is byte-identical to every version before this existed.
 - **Security**: the prompt never appears on any terminal-launch command line — only job ids and
   paths this process constructs. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#debug-mode-development-only)
   for the full reasoning.
-- **Known limitation**: `delegate_cancel` can't forcibly stop a Debug Mode job (the CLI runs in
-  a detached process so the debug session survives an MCP server restart) — close the visible
-  terminal manually to actually stop it.
+- `delegate_cancel` forcibly stops a Debug Mode job: the parent writes a `cancel.request`
+  sentinel that the detached runner polls for and, on detecting it, kills its `claude`
+  subprocess tree the same way production's cancellation path does.
 
 ## Tool: `delegate_task`
 

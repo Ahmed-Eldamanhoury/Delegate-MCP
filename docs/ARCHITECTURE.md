@@ -194,10 +194,15 @@ structurally, not by convention:
   extracted from `createStreamJsonTracker` into `streamJsonParser.js`, is the shared decision
   both paths reuse — not two implementations of "which events matter").
 
-**Known limitation, documented rather than glossed over**: because the actual `claude`
-subprocess is owned by a detached runner process (so a debug session survives an MCP server
-restart), `delegate_cancel` cannot forcibly kill it — cancelling only stops the parent from
-waiting, it doesn't close the visible terminal or its subprocess.
+**Cancellation**: because the actual `claude` subprocess is owned by a detached runner process
+(so a debug session survives an MCP server restart), the parent (`invokeInDebugMode()`) has no
+handle to kill it directly. Instead it observes the same `AbortSignal` production's `invoke()`
+already threads through: on abort it writes a `<logsDir>/cancel.request` sentinel file, and
+`debugRunner.js` polls for that sentinel (a lightweight `setInterval`, mirroring the same
+file-based signaling already used for `response.json`) and converts its appearance into an
+`AbortSignal` abort of its own, which routes through `spawnAndCollect`'s existing
+`shouldCleanupProcessTree`/`killWindowsProcessTree` tree-kill — the same cleanup path production
+cancellation already uses, not a second implementation of it.
 
 **Verified live**, not just via mocked tests: a real `launchDebugTerminal()` call against a
 (deliberately nonexistent) `claudeBin` path was observed to genuinely open a terminal, run the

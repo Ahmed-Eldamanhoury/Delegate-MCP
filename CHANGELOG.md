@@ -1,5 +1,37 @@
 # Changelog
 
+## [2.2.0] - 2026-07-14
+
+Production validation sprint — three verified-defect fixes, no architecture change. Full
+sprint evidence in `docs/superpowers/plans/production-validation-sprint.md` and the
+sprint/evaluation/value reports in the repository root.
+
+### Added
+- `ConsumerRegistry.pruneStale(maxAgeMs)`: removes every consumer whose `lastSeenAt` is older
+  than `maxAgeMs`, returning the number removed. `getStatistics()`'s `totalRegistered` stays
+  all-time (never decremented by pruning), matching `unregister()`'s existing semantics. No
+  consumer wires this in yet — the primitive closes the previously-documented "no auto-expiry"
+  gap; scheduling a sweep is future work (see `docs/releases/KNOWN_LIMITATIONS.md`).
+- `delegate_cancel` now forcibly stops a running Debug Mode job. `invokeInDebugMode()` accepts
+  the same `{signal}` production's `invoke()` already does; on abort it rejects promptly with
+  an `AbortError`-named error and writes a `<logsDir>/cancel.request` sentinel, which
+  `debugRunner.js` polls for and converts into an abort of its own spawned child — routing
+  through the same `spawnAndCollect`/`shouldCleanupProcessTree`/`killWindowsProcessTree`
+  tree-kill path production cancellation already uses. Debug OFF is unaffected.
+
+### Fixed
+- `MetricsCollector.getWorkspaceUsage()`'s artifact-count walk now reuses `isValidJobId()`
+  (matching `pruneWorkspaces()`'s existing filter) instead of treating every subdirectory of
+  `workspace/jobs/` as a job directory. A non-UUID directory manually placed there no longer
+  has its contents miscounted as artifacts. `workspaceSizeBytes` is unchanged by design — it
+  still sums the whole `jobs/` tree.
+
+### Compatibility
+Zero MCP schema change. No change to `RuntimeEventBus`'s `{publish, subscribe, subscribeAll}`
+contract, the Job lifecycle enum, or `ExecutionContext`'s shape. 178/178 tests passing
+(171 pre-existing + 7 new — 3 for `pruneStale`, 1 for the artifact-count filter, 3 for Debug
+Mode cancellation including the abort-listener-leak regression test found in task review).
+
 ## [2.1.0] - 2026-07-14
 
 Debug Mode (development only) — new, opt-in capability. Production behavior is unchanged when

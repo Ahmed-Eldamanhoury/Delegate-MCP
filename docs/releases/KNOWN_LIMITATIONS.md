@@ -6,20 +6,27 @@ document indexes them for a release audience rather than restating the evidence.
 
 ## Verified limitations (none block this release)
 
-1. **`ConsumerRegistry` has no auto-expiry.** A consumer that registers and never calls
-   `unregister()` lingers indefinitely. Zero current risk — no consumer exists yet (Observability
-   has no external consumer in v1.0.0).
-2. **`MetricsCollector`'s artifact-count walk doesn't filter directory names by `isValidJobId()`**
-   the way `pruneWorkspaces()` does. Not a security issue (directory names are sourced from
-   `readdirSync()` itself, never externally supplied) — a cosmetic accuracy gap in an
-   informational metric only.
-3. **Replay fidelity degrades to "coarse" once a job's timeline leaves `TimelineStore`'s
+1. **Replay fidelity degrades to "coarse" once a job's timeline leaves `TimelineStore`'s
    retained window** — fine-grained progress ticks aren't persisted to disk, only final
    aggregated state. Documented, accepted tradeoff (ADR-0003).
-4. **Streaming's real-world verification is limited to 2 CLI captures** plus one live
+2. **Streaming's real-world verification is limited to 2 CLI captures** plus one live
    end-to-end run. Unobserved response shapes (`tool_use`/`tool_result`, multi-turn) are
    silently skipped rather than guessed at — graceful degradation, not a crash risk, but
    broader live-traffic coverage is unverified.
+
+## Resolved since v1.0.0
+
+- **`ConsumerRegistry` had no auto-expiry** (fixed 2.2.0): `pruneStale(maxAgeMs)` now removes
+  consumers whose `lastSeenAt` is older than a caller-supplied age. The primitive is in place;
+  no consumer calls it yet, since `ObservabilityService` still has no external consumer (see
+  Current scope boundaries below) — wiring it into a scheduled sweep is still future work.
+- **`MetricsCollector`'s artifact-count walk didn't filter directory names by `isValidJobId()`**
+  (fixed 2.2.0): now reuses `isValidJobId()` exactly as `pruneWorkspaces()` does, so a
+  non-UUID directory manually placed under `workspace/jobs/` no longer has its contents
+  miscounted as artifacts. `workspaceSizeBytes` is unaffected by design — it still sums the
+  whole `jobs/` tree.
+- **`delegate_cancel` couldn't forcibly stop a Debug Mode job** (fixed 2.2.0): see
+  [docs/ARCHITECTURE.md](../ARCHITECTURE.md#debug-mode-development-only)'s Cancellation section.
 
 ## Current scope boundaries
 
@@ -41,8 +48,9 @@ workspace mutation, policy enforcement, or plugin execution. These remain `JobMa
 
 ## Deferred capabilities
 
-Persistent job store, durable full-fidelity replay (`events.jsonl`), `ConsumerRegistry`
-TTL/auto-expiry — see [SUPPORTED_FEATURES.md](SUPPORTED_FEATURES.md)'s Deferred row for each.
+Persistent job store, durable full-fidelity replay (`events.jsonl`), a scheduled
+`ConsumerRegistry.pruneStale()` sweep wired to a real consumer — see
+[SUPPORTED_FEATURES.md](SUPPORTED_FEATURES.md)'s Deferred row for each.
 
 ## Future extensions
 
