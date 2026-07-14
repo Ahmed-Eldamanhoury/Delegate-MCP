@@ -1,5 +1,42 @@
 # Changelog
 
+## [2.2.1] - 2026-07-14
+
+Critical Stability Sprint — one reproduced High-severity crash fix, plus an investigation
+(ADR, no code change) into the known concurrent-`delegate_*`-dispatch job-tracking
+limitation. Full sprint evidence in
+`docs/superpowers/plans/critical-stability-sprint.md` and the sprint/review/value/
+performance reports in the repository root.
+
+### Fixed
+- **Debug Mode's terminal launcher could crash the entire MCP server.**
+  `launchDebugTerminal()` never attached an `"error"` listener to the spawned terminal
+  process; an async spawn failure (a stale/broken terminal binary, a permissions/AV
+  block, or any other reason the PATH-probe-detected command turned out not to actually
+  be executable) fired an unhandled `"error"` event, which Node treats as an uncaught
+  exception — killing the whole server process and every other in-flight job with it,
+  not just the debug job that triggered it. Reproduced on a real machine before the fix.
+  Fixed by attaching `child.once("error", () => {})`; a launch failure now surfaces as a
+  normal job timeout (`DEBUG_TIMEOUT`, already existed) instead of a server crash.
+
+### Investigated (no code change)
+- **Duplicate `server.js` instances silently splitting job-tracking state** (the known
+  limitation documented in the prior sprint's `SPRINT_REPORT.md`/`DELEGATE_VALUE_REPORT.md`):
+  see [ADR-0004](docs/adr/ADR-0004-server-instance-lifecycle.md) for the full root-cause
+  investigation. Confirmed: no startup single-instance guard exists, and the MCP SDK's
+  `StdioServerTransport` never detects its own `stdin` closing to self-shut-down. A naive
+  global instance lock is rejected as likely wrong (would break legitimate concurrent
+  multi-window usage, since `stdio` transport is inherently per-client). The recommended
+  fix (`stdin`-close self-shutdown) is deferred to a future wave pending verification of
+  actual MCP-host process-lifecycle behavior. The operating mitigation is unchanged:
+  avoid batching `delegate_*` MCP calls in a single message.
+
+### Compatibility
+Zero MCP schema change. No frozen contract touched (`RuntimeEventBus`, the Job lifecycle
+enum, `ExecutionContext`'s shape, `docs/FOUNDATION_FREEZE.md`/`docs/OBSERVABILITY_FREEZE.md`
+guarantees — confirmed untouched via diff, not assumed). 179/179 tests passing
+(178 pre-existing + 1 new regression test for the crash fix).
+
 ## [2.2.0] - 2026-07-14
 
 Production validation sprint — three verified-defect fixes, no architecture change. Full

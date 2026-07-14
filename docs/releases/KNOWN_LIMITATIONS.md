@@ -13,6 +13,12 @@ document indexes them for a release audience rather than restating the evidence.
    end-to-end run. Unobserved response shapes (`tool_use`/`tool_result`, multi-turn) are
    silently skipped rather than guessed at — graceful degradation, not a crash risk, but
    broader live-traffic coverage is unverified.
+3. **A stale/orphaned `server.js` instance can silently split job-tracking state from a
+   live one** — nothing in the current startup path guards against or detects a second
+   instance, and the MCP SDK's `StdioServerTransport` never notices its own `stdin`
+   closing to self-shut-down. Root-caused, not just observed: see
+   [ADR-0004](../adr/ADR-0004-server-instance-lifecycle.md). Operating mitigation: avoid
+   batching `delegate_*` MCP calls in a single message; issue them one at a time.
 
 ## Resolved since v1.0.0
 
@@ -27,6 +33,10 @@ document indexes them for a release audience rather than restating the evidence.
   whole `jobs/` tree.
 - **`delegate_cancel` couldn't forcibly stop a Debug Mode job** (fixed 2.2.0): see
   [docs/ARCHITECTURE.md](../ARCHITECTURE.md#debug-mode-development-only)'s Cancellation section.
+- **Debug Mode's terminal launcher could crash the entire MCP server** on a spawn failure
+  (fixed 2.2.1): reproduced on a real machine, then fixed by attaching an `"error"`
+  listener to the spawned terminal process instead of leaving it unhandled. See
+  `CHANGELOG.md`'s 2.2.1 entry.
 
 ## Current scope boundaries
 
