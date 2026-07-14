@@ -81,8 +81,9 @@ original object nor a `listConsumers()` result can be mutated to corrupt the reg
   it would duplicate `TimelineStore`'s data while a job's timeline is still retained.
 - **Consumer TTL/auto-expiry**: `ConsumerRegistry` currently relies on callers calling
   `unregister()`; `touch()`/`getHealth().lastSeenAt` exist so a future consumer of the registry
-  could implement staleness detection itself. No auto-eviction is built in (see Known
-  Limitations in the certification report) — deliberately not built speculatively.
+  could implement staleness detection itself. A `pruneStale(maxAgeMs)` primitive was added in
+  2.2.0, but no scheduled sweep is wired to it yet — still no *automatic* eviction, deliberately
+  not built speculatively (see `docs/releases/KNOWN_LIMITATIONS.md`).
 
 ## Non-goals
 
