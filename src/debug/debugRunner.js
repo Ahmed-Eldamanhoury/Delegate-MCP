@@ -19,7 +19,7 @@
  * which node.exe would immediately interpret as its own `--print` flag. `main()` below is the
  * only thing that actually runs when this file is launched for real.
  */
-import { readFileSync, writeFileSync, appendFileSync, createWriteStream } from "node:fs";
+import { readFileSync, writeFileSync, appendFileSync, createWriteStream, existsSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { buildArgs, buildExecOptions, spawnAndCollect, parseResult } from "../services/claudeCliService.js";
@@ -27,10 +27,12 @@ import { parseStreamJsonChunk } from "../services/streamJsonParser.js";
 
 /**
  * @param {object} invocation parsed invocation.json content
- * @param {{spawnAndCollectFn?: typeof spawnAndCollect, now?: () => string}} [deps]
+ * @param {{spawnAndCollectFn?: typeof spawnAndCollect, now?: () => string, existsFn?: typeof existsSync, cancelPollMs?: number}} [deps]
+ *   `existsFn`/`cancelPollMs` are injectable purely so the cancel-sentinel poll is unit-testable
+ *   without touching the real filesystem or a real subprocess.
  * @returns {Promise<{outcome: object, banner: string, commandDisplay: string}>}
  */
-export async function runDebugJob(invocation, { spawnAndCollectFn = spawnAndCollect, now = () => new Date().toISOString() } = {}) {
+export async function runDebugJob(invocation, { spawnAndCollectFn = spawnAndCollect, now = () => new Date().toISOString(), existsFn = existsSync, cancelPollMs = 250 } = {}) {
   const {
     jobId,
     prompt,
@@ -102,19 +104,32 @@ export async function runDebugJob(invocation, { spawnAndCollectFn = spawnAndColl
     stderrLogStream.write(chunk);
   }
 
+  // This process owns the real `claude` child the MCP server has no handle to. debugInvoke.js
+  // drops a `cancel.request` sentinel when delegate_cancel aborts; poll for it and abort the
+  // signal, which routes through spawnAndCollect's existing AbortError → Windows taskkill /t /f
+  // process-tree cleanup — the same cancellation path production already uses, not a new one.
+  const cancelController = new AbortController();
+  const cancelPath = join(logsDir, "cancel.request");
+  const cancelPoll = setInterval(() => {
+    if (existsFn(cancelPath)) cancelController.abort();
+  }, cancelPollMs);
+  cancelPoll.unref?.();
+
   const startedAt = now();
   let outcome;
   try {
     const { raw, exitCode, stderr } = await spawnAndCollectFn(
       claudeBin,
       args,
-      { cwd, env, timeout },
+      { cwd, env, timeout, signal: cancelController.signal },
       { maxBufferBytes, onStdout, onStderr }
     );
     outcome = parseResult(resultLine ? JSON.stringify(resultLine) : raw, exitCode, stderr);
   } catch (err) {
     outcome = parseResult("", typeof err?.code === "number" ? err.code : 1, err?.message ?? String(err));
     outcome.error = err?.message ?? String(err);
+  } finally {
+    clearInterval(cancelPoll);
   }
   const finishedAt = now();
 

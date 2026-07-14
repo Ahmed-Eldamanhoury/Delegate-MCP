@@ -158,6 +158,39 @@ test("tails stream.jsonl and publishes JobProgress on the bus as new lines appea
   }
 });
 
+test("aborting an in-flight call rejects promptly with an AbortError-shaped error and writes the cancel.request sentinel", async () => {
+  const workspaceRoot = mkdtempSync(join(tmpdir(), "debug-invoke-"));
+  try {
+    const jobId = "job-abort";
+    const { config, context } = baseArgs(workspaceRoot, jobId); // timeoutMs: 2000
+    const controller = new AbortController();
+
+    const launchFn = () => ({ terminalKind: "cmd" }); // never writes response.json
+
+    const start = Date.now();
+    setTimeout(() => controller.abort(), 100);
+
+    await assert.rejects(
+      () => invokeInDebugMode("p", context, config, { jobId, launchFn, signal: controller.signal }),
+      (err) => {
+        assert.equal(err.name, "AbortError", "must reject with an AbortError-named error, matching production's err.name check");
+        return true;
+      }
+    );
+
+    const elapsed = Date.now() - start;
+    assert.ok(elapsed < 1500, `must reject well before the 2000ms timeout budget, took ${elapsed}ms`);
+
+    const logsDir = join(workspaceRoot, "jobs", jobId, "logs");
+    assert.ok(
+      existsSync(join(logsDir, "cancel.request")),
+      "cancel.request sentinel must be written on abort so the detached runner can kill its child"
+    );
+  } finally {
+    rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
 test("throws a clear timeout error if response.json never appears within the budget", async () => {
   const workspaceRoot = mkdtempSync(join(tmpdir(), "debug-invoke-"));
   try {

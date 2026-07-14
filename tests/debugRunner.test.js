@@ -163,6 +163,44 @@ test("a subprocess failure still writes response.json/metadata.json (never hangs
   }
 });
 
+test("detects the cancel.request sentinel mid-run and aborts its spawned child (kill path), without spawning a real process", async () => {
+  const logsDir = mkdtempSync(join(tmpdir(), "debug-runner-"));
+  try {
+    // Long-running fake: stays pending until its AbortSignal fires — the same signal-based
+    // cancellation the real spawnAndCollect turns into a Windows process-tree kill. The abort
+    // listener stands in for the fake "kill function" the test asserts was invoked.
+    let killed = false;
+    const spawnFn = (bin, args, spawnOptions, _opts) =>
+      new Promise((_resolve, reject) => {
+        spawnOptions.signal.addEventListener(
+          "abort",
+          () => {
+            killed = true;
+            const err = new Error("aborted");
+            err.name = "AbortError";
+            reject(err);
+          },
+          { once: true }
+        );
+      });
+
+    // Simulate the sentinel appearing after the first existence check.
+    let checks = 0;
+    const existsFn = () => ++checks > 1;
+
+    const { outcome } = await runDebugJob(baseInvocation(logsDir), {
+      spawnAndCollectFn: spawnFn,
+      existsFn,
+      cancelPollMs: 20,
+    });
+
+    assert.equal(killed, true, "runDebugJob must invoke its child-kill path when the sentinel appears");
+    assert.match(outcome.error, /abort/i);
+  } finally {
+    rmSync(logsDir, { recursive: true, force: true });
+  }
+});
+
 test("banner includes exact command, working directory, model, tools, budget, and job id", async () => {
   const logsDir = mkdtempSync(join(tmpdir(), "debug-runner-"));
   try {

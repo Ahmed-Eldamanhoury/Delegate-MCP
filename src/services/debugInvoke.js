@@ -26,10 +26,13 @@ const POLL_INTERVAL_MS = 200;
  * @param {string} prompt
  * @param {import("../models/executionContext.js").ExecutionContext} context
  * @param {import("../config/index.js").DelegateConfig} config
- * @param {{onSpawn?: () => void, bus?: object, jobId: string, launchFn?: typeof launchDebugTerminal}} opts
+ * @param {{signal?: AbortSignal, onSpawn?: () => void, bus?: object, jobId: string, launchFn?: typeof launchDebugTerminal}} opts
+ *   `signal` matches production `invoke()`'s calling convention (see claudeCliService.js) — when
+ *   it aborts, this stops waiting immediately and writes a `cancel.request` sentinel so the
+ *   detached runner (which owns the real `claude` child) can kill it.
  * @returns {Promise<{raw: string, parsed: object|null, exitCode: number, stderr: string}>}
  */
-export async function invokeInDebugMode(prompt, context, config, { onSpawn, bus, jobId, launchFn = launchDebugTerminal } = {}) {
+export async function invokeInDebugMode(prompt, context, config, { signal, onSpawn, bus, jobId, launchFn = launchDebugTerminal } = {}) {
   const logsDir = join(getWorkspaceRoot(config), jobId, "logs");
   mkdirSync(logsDir, { recursive: true });
   writeFileSync(join(logsDir, "prompt.txt"), prompt);
@@ -85,12 +88,28 @@ export async function invokeInDebugMode(prompt, context, config, { onSpawn, bus,
   }
 
   while (Date.now() < deadline) {
+    if (signal?.aborted) return abortDebugJob();
     tailStreamJsonl();
     if (existsSync(responsePath)) {
       tailStreamJsonl(); // catch anything written between the last tail and completion
       return JSON.parse(readFileSync(responsePath, "utf8"));
     }
-    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    // Wake early on abort instead of waiting out the full poll interval, so cancellation is prompt.
+    await new Promise((resolve) => {
+      const t = setTimeout(resolve, POLL_INTERVAL_MS);
+      signal?.addEventListener("abort", () => { clearTimeout(t); resolve(); }, { once: true });
+    });
+  }
+  if (signal?.aborted) return abortDebugJob();
+
+  function abortDebugJob() {
+    // Cross-process cancellation signal: this parent has no handle to the detached runner's
+    // `claude` child, so it drops a sentinel file the runner polls for (mirroring the same
+    // file-based signaling already used for response.json). Empty content is sufficient.
+    writeFileSync(join(logsDir, "cancel.request"), "");
+    const err = new Error(`Debug Mode job ${jobId} was cancelled`);
+    err.name = "AbortError"; // matches production's spawnAndCollect abort shape (err.name === "AbortError")
+    throw err;
   }
 
   const err = new Error(

@@ -295,7 +295,7 @@ export async function invoke(prompt, context, config, { signal, onSpawn, bus, jo
   // without one (e.g. invoke() called standalone in a test) this falls through to production
   // behavior same as always.
   if (config.debugMode && jobId) {
-    return invokeInDebugMode(prompt, context, config, { onSpawn, bus, jobId, launchFn: debugLaunchFn });
+    return invokeInDebugMode(prompt, context, config, { signal, onSpawn, bus, jobId, launchFn: debugLaunchFn });
   }
 
   const args = buildArgs(prompt, context);
