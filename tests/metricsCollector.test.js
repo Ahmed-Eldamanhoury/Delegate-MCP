@@ -92,15 +92,37 @@ test("with no config, workspaceSizeBytes/artifactCount stay null", () => {
 test("with a config, workspaceSizeBytes/artifactCount are computed from real files on disk (read-only)", () => {
   const workspaceRoot = mkdtempSync(join(tmpdir(), "obs-metrics-"));
   try {
-    const jobDir = join(workspaceRoot, "jobs", "job-1");
+    const jobId = "550e8400-e29b-41d4-a716-446655440000";
+    const jobDir = join(workspaceRoot, "jobs", jobId);
     mkdirSync(join(jobDir, "artifacts"), { recursive: true });
-    writeFileSync(join(jobDir, "metadata.json"), '{"id":"job-1"}');
+    writeFileSync(join(jobDir, "metadata.json"), `{"id":"${jobId}"}`);
     writeFileSync(join(jobDir, "artifacts", "out.txt"), "hello world");
 
     const collector = createMetricsCollector({ config: { workspaceRoot } });
     const m = collector.getMetrics();
     assert.equal(m.artifactCount, 1);
     assert.ok(m.workspaceSizeBytes > 0);
+  } finally {
+    rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test("artifactCount excludes non-UUID directories under jobs/ (e.g. a manually placed 'notes' dir), while a real job's artifacts still count", () => {
+  const workspaceRoot = mkdtempSync(join(tmpdir(), "obs-metrics-"));
+  try {
+    const jobId = "550e8400-e29b-41d4-a716-446655440000";
+    const jobDir = join(workspaceRoot, "jobs", jobId);
+    mkdirSync(join(jobDir, "artifacts"), { recursive: true });
+    writeFileSync(join(jobDir, "artifacts", "out.txt"), "hello world");
+
+    // Not a valid job id (fails isValidJobId) — its contents must not be miscounted as artifacts.
+    const notesDir = join(workspaceRoot, "jobs", "notes");
+    mkdirSync(join(notesDir, "artifacts"), { recursive: true });
+    writeFileSync(join(notesDir, "artifacts", "scratch.txt"), "not a job artifact");
+
+    const collector = createMetricsCollector({ config: { workspaceRoot } });
+    const m = collector.getMetrics();
+    assert.equal(m.artifactCount, 1);
   } finally {
     rmSync(workspaceRoot, { recursive: true, force: true });
   }

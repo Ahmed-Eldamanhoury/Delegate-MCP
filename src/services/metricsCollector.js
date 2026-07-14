@@ -1,7 +1,7 @@
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { EVENT_TYPES } from "../models/runtimeEvent.js";
-import { getWorkspaceRoot } from "./workspaceManager.js";
+import { getWorkspaceRoot, isValidJobId } from "./workspaceManager.js";
 
 /** Recursively sums file bytes/count under dir. Never throws — missing/unreadable dirs read as empty. */
 function walkDirStats(dir) {
@@ -48,7 +48,7 @@ function getWorkspaceUsage(config) {
   }
   let artifactCount = 0;
   for (const entry of jobDirs) {
-    if (!entry.isDirectory()) continue;
+    if (!entry.isDirectory() || !isValidJobId(entry.name)) continue;
     artifactCount += walkDirStats(join(jobsRoot, entry.name, "artifacts")).files;
   }
   return { workspaceSizeBytes, artifactCount };
