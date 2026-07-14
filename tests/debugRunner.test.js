@@ -188,14 +188,28 @@ test("detects the cancel.request sentinel mid-run and aborts its spawned child (
     let checks = 0;
     const existsFn = () => ++checks > 1;
 
-    const { outcome } = await runDebugJob(baseInvocation(logsDir), {
-      spawnAndCollectFn: spawnFn,
-      existsFn,
-      cancelPollMs: 20,
-    });
+    // runDebugJob() deliberately unref()s its own cancel-poll interval (production only
+    // needs it to run alongside a real, event-loop-holding child process) -- but in this
+    // test the fake spawnFn's promise settles *solely* via that interval firing, with
+    // nothing else keeping the process referenced. Node's test runner can decide the event
+    // loop is idle and force-fail with "Promise resolution is still pending but the event
+    // loop has already resolved" (observed intermittently on Linux CI runners, not locally)
+    // before the unref'd interval gets a chance to tick. A plain, ref'd, self-clearing timer
+    // fixes this: it exists only to keep the test process referenced while waiting, and is
+    // cleared as soon as the real assertion path resolves either way.
+    const keepAlive = setInterval(() => {}, 1000);
+    try {
+      const { outcome } = await runDebugJob(baseInvocation(logsDir), {
+        spawnAndCollectFn: spawnFn,
+        existsFn,
+        cancelPollMs: 20,
+      });
 
-    assert.equal(killed, true, "runDebugJob must invoke its child-kill path when the sentinel appears");
-    assert.match(outcome.error, /abort/i);
+      assert.equal(killed, true, "runDebugJob must invoke its child-kill path when the sentinel appears");
+      assert.match(outcome.error, /abort/i);
+    } finally {
+      clearInterval(keepAlive);
+    }
   } finally {
     rmSync(logsDir, { recursive: true, force: true });
   }
