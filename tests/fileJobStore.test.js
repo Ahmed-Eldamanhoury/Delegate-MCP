@@ -108,12 +108,21 @@ test("constructor hydrates its cache from an existing directory of well-formed j
   assert.deepEqual(ids, [ID_A, ID_B].sort());
 });
 
-test("isValidJobId is enforced before any path is constructed from an id", () => {
+test("create() with an invalid id throws and leaves no trace in the cache", () => {
   const dir = freshDir();
   const store = new FileJobStore({ dir });
 
   assert.throws(() => store.create({ ...createJob(ID_A), id: "../../etc/passwd" }));
-  assert.throws(() => store.update("../../etc/passwd", { status: "completed" }));
+  assert.equal(store.get("../../etc/passwd"), undefined);
+  assert.deepEqual(store.list(), []);
+});
+
+test("update() on an id that was never created returns undefined safely, without touching the filesystem", () => {
+  const dir = freshDir();
+  const store = new FileJobStore({ dir });
+
+  assert.equal(store.update("../../etc/passwd", { status: "completed" }), undefined);
+  assert.deepEqual(store.list(), []);
 });
 
 test("a write failure is caught, logged via logger.warn, and does not throw", () => {

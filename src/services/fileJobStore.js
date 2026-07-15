@@ -61,8 +61,8 @@ export class FileJobStore {
 
   /** @param {import("../models/job.js").Job} job */
   create(job) {
-    this.cache.set(job.id, job);
     this._write(job);
+    this.cache.set(job.id, job);
     return job;
   }
 
