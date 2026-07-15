@@ -1,71 +1,60 @@
-# Value Report — Delegate MCP Evaluation, Critical Stability Sprint
+# Value Report — Delegate MCP Evaluation, Dogfooding Sprint (2026-07-15)
 
-**Question this document answers (per the sprint's stated objectives):** Did Delegate MCP
+**Question this document answers (per the sprint's stated objectives):** did Delegate MCP
 improve developer productivity during this sprint?
 
-**Honest headline answer: Delegate MCP's own tools (`delegate_task`/`delegate_submit`)
-were not used at all this sprint — and that absence is itself the finding, not an
-oversight.** This document explains why, and what it does and doesn't tell us about
-Delegate MCP's value.
+**Honest headline answer: yes, for the one task shaped like Delegate's proven strength —
+but the sprint's actual code-writing task again went to the native `Agent` tool, so the
+central "can it be the implementer" question is still untested.** This is the fourth
+sprint in a row where that's true. This document explains what changed and what didn't.
 
-## Why `delegate_*` wasn't exercised this sprint
+## Where `delegate_submit` was used, and why it worked
 
-The sprint's own explicit rule was: **"Use `delegate_submit` for long-running tasks. Avoid
-concurrent `delegate_*` calls until the known multi-instance tracking limitation is
-resolved."** Neither task this sprint was long-running:
+The whole-repo `ponytail-audit` (see [DOGFOODING_REPORT.md](DOGFOODING_REPORT.md) and
+[DOGFOODING_METRICS.md](DOGFOODING_METRICS.md) for full detail) was independent,
+substantial, and read-only — exactly the shape the prior sprint's `DELEGATE_VALUE_REPORT.md`
+scoped as `delegate_submit`'s proven use case. It ran unattended for 138.5s while the
+controller did other useful sprint work (a documentation commit, ledger bookkeeping) —
+real time recovered, not hypothetical. It returned a fixed, itemized cost ($1.0394 USD)
+the native `Agent` tool never surfaces. And it surfaced a real, independently-verifiable
+finding — a `Bash`-vs-`PowerShell` tool-permission inconsistency — that came from
+inspecting the job's *structured* result (`permission_denials`), not its prose summary.
+That last point is itself a value signal: Delegate's machine-readable job result exposed
+something a plain-text agent report likely would not have.
 
-- Task 1 (the crash fix) was a complete-spec, transcription-and-verification job: the
-  plan already contained the exact test code and the exact fix code. It took the native
-  `Agent` tool 113,167 ms (≈1.9 minutes) end to end, including running the full 179-test
-  suite.
-- Task 2 (the ADR) took longer in wall-clock terms (420,649 ms, ≈7 minutes — see
-  [PERFORMANCE_REPORT.md](PERFORMANCE_REPORT.md)) but is not the kind of long-running,
-  fire-and-forget background work `delegate_submit` is designed for — it needed to read
-  source files back and forth with the controller's own investigation, not run
-  unattended.
+## Where it wasn't used, and why that's not (necessarily) a miss
 
-Given the sprint's own rule, routing both through the native `Agent` tool was the
-*correct* choice, not a missed opportunity to dogfood. This sprint simply didn't generate
-a task shaped like the one `delegate_submit` demonstrated real value on last sprint
-(Task 3 of the prior sprint: an 8-minute, `$2.64`, fully unattended opus run).
+Task 0 — the actual code fix (extracting `entry.js`'s side effect, writing the
+regression test, verifying red-green) — went to the native `Agent` tool via
+`subagent-driven-development`'s own default implementer template. This was a default, not
+a comparison: the brief already contained complete code (the plan specified the exact
+test and the exact fix), making it a "cheap model, mechanical transcription" task per
+that skill's own model-selection guidance — and that guidance names `Agent`, not
+`delegate_*`, as the default dispatch mechanism.
+
+**This means the sprint gathered zero new evidence on whether `delegate_task`/
+`delegate_submit` can reliably serve as the implementer**, one way or the other. Three
+prior sprints share this same gap (v2.2.0: `delegate_*` used for research only; v2.2.1:
+"`delegate_task`/`delegate_submit` were not used at all this sprint"). Four sprints in,
+this remains the single most consequential untested question, not a settled "no."
 
 ## What this means for the standing evaluation
 
-The prior sprint's [DELEGATE_VALUE_REPORT.md] conclusions (preserved in git history at
-commit `c1f3c72`) are **neither confirmed nor contradicted** by this sprint — there is no
-new evidence either way, because the pattern that report evaluated (single, long-running,
-background `delegate_submit` dispatch) simply didn't arise. The prior report's scoped
-recommendation stands as the operative guidance: use `delegate_submit` for standalone,
-substantial background work, one dispatch at a time; use the native `Agent` tool for
-everything else, especially anything dispatched alongside other work in the same turn.
+The prior sprint's `VALUE_REPORT.md` (preserved in git history at commit `c1f3c72`)
+concluded the operative guidance was: use `delegate_submit` for standalone, substantial,
+background work one dispatch at a time; use the native `Agent` tool for everything else.
+This sprint **confirms** that guidance with a fresh, positive data point (the audit) and
+**does not extend it** to the implementer role. The recommendation in
+[DOGFOODING_DECISION.md](DOGFOODING_DECISION.md) — a direct head-to-head implementer
+trial as the next sprint's explicit focus — exists specifically to close this gap rather
+than let a fifth sprint repeat the same untested pattern.
 
-This sprint does add one new, relevant data point to that standing evaluation: the
-**duplicate-server-instance investigation (ADR-0004)** confirms, with actual code-level
-evidence rather than just an observed symptom, *why* the prior sprint's concurrent-
-dispatch job-tracking failure happened — no startup guard, no `stdin`-close self-
-shutdown. That strengthens rather than changes the prior sprint's operating
-recommendation ("avoid batching `delegate_*` calls"): it is now understood as a real,
-identified architectural gap with a specific proposed fix, not just an intermittent,
-unexplained flake.
+## New friction this sprint, and its actual scope
 
-## Did the native `Agent` tool improve productivity this sprint?
-
-Yes, concretely: the three audit agents (deferred-findings re-verification, fresh
-correctness/security sweep, coverage/CI hygiene) were dispatched **in parallel** and
-together surfaced the sprint's one actionable High-severity finding in 684,663 ms
-(≈11.4 minutes) of wall-clock time — versus an estimated 1,446,553 ms (≈24.1 minutes) had
-they run sequentially, a genuine ~53% wall-clock reduction for the audit phase (see
-[PERFORMANCE_REPORT.md](PERFORMANCE_REPORT.md) for the full breakdown). This is squarely
-what `dispatching-parallel-agents` is for, and it worked without any of the coordination
-problems the prior sprint hit with concurrent `delegate_*` calls — because these were
-native `Agent` tool dispatches, not `delegate_*` MCP calls, and don't share the
-in-memory, per-server-process `JobManager` state that caused that earlier failure.
-
-## Recommendation
-
-No change to the prior sprint's scoped GO recommendation. This sprint reinforces a
-narrower, more specific point: **for short, complete-spec, or investigation-heavy tasks —
-and especially for anything dispatched in parallel with other work — the native `Agent`
-tool remains the right default.** `delegate_submit` should be reached for specifically
-when a task is long enough and self-contained enough to be worth taking off the session's
-own turn budget, as demonstrated concretely by the prior sprint's Task 3, not by default.
+The `allowed_tools` restriction blocked the audit job's `Bash` calls but not its
+`PowerShell` fallback. Traced to `src/services/claudeCliService.js:44`, which correctly
+forwards `--allowedTools` to the external `claude` CLI — this repository's own code is
+not at fault, and the gap cannot be closed by changing code in this repo. Recorded as an
+operational caveat (don't rely on `allowed_tools` as a hard security boundary on Windows
+yet), not scored against Delegate MCP's own value, since the mechanism this project
+actually owns did exactly what it was supposed to do.
