@@ -15,6 +15,7 @@ const DEFAULT_BIN = process.env.APPDATA
 
 const PROJECT_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKSPACE_ROOT = join(PROJECT_ROOT, "workspace");
+const DEFAULT_JOB_STORE_DIR = join(PROJECT_ROOT, "job-store");
 
 export const READONLY_TOOLS = "Read Grep Glob WebSearch WebFetch";
 
@@ -40,6 +41,8 @@ export const DEFAULT_MAX_WORKSPACE_HISTORY = 100;
  * @property {number} maxJobHistory
  * @property {string} workspaceRoot
  * @property {number} maxWorkspaceHistory
+ * @property {"memory"|"file"} jobStore
+ * @property {string} jobStoreDir
  * @property {boolean} debugMode
  */
 
@@ -66,6 +69,8 @@ export function loadConfig(env = process.env) {
     workspaceRoot: env.CLAUDE_DELEGATE_WORKSPACE_DIR || DEFAULT_WORKSPACE_ROOT,
     maxWorkspaceHistory:
       Number(env.CLAUDE_DELEGATE_MAX_WORKSPACE_HISTORY) || DEFAULT_MAX_WORKSPACE_HISTORY,
+    jobStore: env.CLAUDE_DELEGATE_JOB_STORE || "memory",
+    jobStoreDir: env.CLAUDE_DELEGATE_JOB_STORE_DIR || DEFAULT_JOB_STORE_DIR,
     debugMode: env[DEBUG_MODE_ENV_VAR] === "true",
   });
 }

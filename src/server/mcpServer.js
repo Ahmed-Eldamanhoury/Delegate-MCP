@@ -3,6 +3,8 @@ import { z } from "zod";
 import { DelegateTaskInputShape } from "../models/schemas.js";
 import { JOB_STATUS } from "../models/job.js";
 import { JobManager } from "../services/jobManager.js";
+import { InMemoryJobStore } from "../services/jobStore.js";
+import { FileJobStore } from "../services/fileJobStore.js";
 import { createRuntimeEventBus } from "../services/runtimeEventBus.js";
 import { wireWorkspaceToEventBus } from "../services/workspaceEventBridge.js";
 import { createObservabilityService } from "../services/observabilityService.js";
@@ -31,12 +33,28 @@ const JOB_ID_FIELD = z
   .describe("Job id, as returned by delegate_task, delegate_submit, or delegate_history.");
 
 /**
+ * Picks the JobStore implementation per config.jobStore. Extracted as its own exported
+ * function so it's unit-testable without constructing a full McpServer, which returns
+ * only the server instance and never exposes its internal JobManager/store.
+ * @param {import("../config/index.js").DelegateConfig} config
+ * @param {{warn: Function}} [logger]
+ * @returns {import("../services/jobStore.js").JobStore}
+ */
+export function selectJobStore(config, logger) {
+  if (config.jobStore === "file") {
+    return new FileJobStore({ dir: config.jobStoreDir, logger });
+  }
+  return new InMemoryJobStore();
+}
+
+/**
  * @param {{config: import("../config/index.js").DelegateConfig, logger: ReturnType<import("../logging/logger.js").createLogger>, version: string}} deps
  */
 export function createMcpServer({ config, logger, version }) {
   const server = new McpServer({ name: "claude-delegate", version });
   const bus = createRuntimeEventBus({ logger });
   const jobManager = new JobManager({
+    store: selectJobStore(config, logger),
     maxConcurrent: config.maxConcurrentJobs,
     maxHistory: config.maxJobHistory,
     logger,
