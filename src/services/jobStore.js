@@ -1,7 +1,18 @@
 /**
- * Minimal storage interface for Job records. In-memory today; a future persistent store
- * (e.g. SQLite) can implement the same four methods and be swapped in via JobManager's
- * `store` dependency — no changes needed elsewhere.
+ * @typedef {Object} JobStore
+ * @property {(job: import("../models/job.js").Job) => import("../models/job.js").Job} create
+ * @property {(id: string) => import("../models/job.js").Job | undefined} get
+ * @property {(id: string, patch: Partial<import("../models/job.js").Job>) => import("../models/job.js").Job | undefined} update
+ * @property {() => import("../models/job.js").Job[]} list
+ * @property {(id: string) => boolean} delete
+ */
+
+/**
+ * In-memory implementation of {@link JobStore}. See
+ * docs/adr/ADR-0005-persistent-job-store.md for `FileJobStore`, a restart-durable
+ * alternative implementing the same interface — swapped in via `JobManager`'s `store`
+ * dependency, no changes needed elsewhere.
+ * @implements {JobStore}
  */
 export class InMemoryJobStore {
   constructor() {

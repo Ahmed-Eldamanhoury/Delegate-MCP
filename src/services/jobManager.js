@@ -13,7 +13,7 @@ import { createRuntimeEventBus } from "./runtimeEventBus.js";
  * a subscriber that needs full detail reconciles via getJob(id).
  */
 export class JobManager {
-  /** @param {{store?: InMemoryJobStore, maxConcurrent?: number, maxHistory?: number, logger?: object, bus?: ReturnType<typeof createRuntimeEventBus>}} [opts] */
+  /** @param {{store?: import("./jobStore.js").JobStore, maxConcurrent?: number, maxHistory?: number, logger?: object, bus?: ReturnType<typeof createRuntimeEventBus>}} [opts] */
   constructor({
     store = new InMemoryJobStore(),
     maxConcurrent = 2,
