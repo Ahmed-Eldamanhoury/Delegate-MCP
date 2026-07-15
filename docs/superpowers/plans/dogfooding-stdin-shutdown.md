@@ -43,13 +43,175 @@ through the same `shutdown()` closure.
 
 ---
 
-## Task 1 — Extract and test the shutdown-wiring, add stdin-close handling
+## Task 0 — Fix `entry.js`'s import-time side effect (blocks Task 1's own tests)
+
+**Discovered while resuming this plan:** `entry.js`'s bottom-of-file
+`main().catch(...)` call executes unconditionally at *import* time, not only when
+`server.js` is actually run. `tests/entry.test.js` (Task 1, already written) imports
+`registerShutdownHandlers` from `entry.js` — which means merely importing it for testing
+also runs the real `main()`: it calls the real `checkClaudeBinary`, creates a real
+`McpServer`, and connects a real `StdioServerTransport` to the test process's own
+`stdin`/`stdout`. That live server never exits on its own, so it holds the Node test
+process open indefinitely — reproduced directly: `npm test` hung and had to be killed,
+leaving orphaned `node.exe` processes; `node --test tests/entry.test.js` alone also
+leaves a live server running after its 5 tests print PASS.
+
+**Root cause:** `entry.js` conflates two responsibilities — "define `main`" and "run
+`main`" — with no guard between them. The obvious fix (`import.meta.url ===
+process.argv[1]`-style self-check) does **not work here**: `server.js` is the actual
+documented entrypoint (`claude_desktop_config.json` points at it; its own header comment
+says so) and reaches `entry.js` via `import "./src/cli/entry.js"` — meaning
+`process.argv[1]` is always `server.js`'s path, never `entry.js`'s own, even in the one
+legitimate production case. That self-check would silently break production startup.
+
+**Fix:** stop `entry.js` from invoking `main()` itself. Export `main`; have `server.js`
+(the one file whose whole job is "be the real entrypoint") import and call it. This makes
+`entry.js` a pure module — safe to import from a test with zero side effects — without
+relying on any environment-sniffing or path-comparison trick.
 
 **Files:**
-- Modify: `src/cli/entry.js`
-- Test: `tests/entry.test.js` (new file — `entry.js` currently has zero test coverage)
+- Modify: `src/cli/entry.js` (remove the trailing `main().catch(...)` call; keep the
+  `export async function main()` declaration itself unchanged)
+- Modify: `server.js`
+- Test: `tests/entry.test.js` (append one regression test)
 
-**Problem:** `src/cli/entry.js`'s `main()` inlines its shutdown wiring:
+**Interfaces:**
+- Produces: `entry.js` still exports `registerShutdownHandlers` (unchanged signature) and
+  `main` (unchanged signature, `async function main(): Promise<void>`), but no longer
+  calls either at module load.
+
+- [ ] **Step 1: Write the failing regression test**
+
+Append to `tests/entry.test.js` (same file Task 1 already created):
+
+```js
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+test("importing entry.js has no import-time side effects — it must not start the server", () => {
+  const entryPath = fileURLToPath(new URL("../src/cli/entry.js", import.meta.url));
+  const script = `import(${JSON.stringify(entryPath)}).then(() => { process.stdout.write("imported-ok"); process.exit(0); });`;
+  const output = execFileSync(process.execPath, ["--input-type=module", "-e", script], {
+    encoding: "utf8",
+    timeout: 5000,
+  });
+  assert.equal(output, "imported-ok");
+});
+```
+
+This spawns a fresh Node process that imports `entry.js` alone (never calling `main`) and
+immediately exits. If `entry.js` still auto-runs `main()` on import, the spawned process
+starts a live `StdioServerTransport` connected to its own `stdin`/`stdout` and never
+exits — `execFileSync`'s 5s `timeout` kills it and throws, failing the test. `add` this
+import block above the existing `import { registerShutdownHandlers } from ...` line at
+the top of the file.
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `node --test tests/entry.test.js`
+
+Expected: the new test fails/times out (the process hangs past 5000ms and
+`execFileSync` throws `ETIMEDOUT`); the 5 pre-existing tests in this file still pass.
+
+- [ ] **Step 3: Implement the fix**
+
+In `src/cli/entry.js`, delete only the trailing block (keep everything above it,
+including `export async function main() { ... }`, unchanged):
+
+```js
+main().catch((err) => {
+  process.stderr.write(`fatal startup error: ${err.stack || err.message}\n`);
+  process.exit(1);
+});
+```
+
+In `server.js`, replace the whole file with:
+
+```js
+// Backward-compatible entrypoint — claude_desktop_config.json points at this exact path.
+// Actual implementation lives in src/; see docs/ARCHITECTURE.md.
+import { main } from "./src/cli/entry.js";
+
+main().catch((err) => {
+  process.stderr.write(`fatal startup error: ${err.stack || err.message}\n`);
+  process.exit(1);
+});
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `node --test tests/entry.test.js`
+
+Expected: all 6 tests pass (5 from Task 1 + this one), and the command itself returns
+promptly (no hang, no orphaned process left behind — confirm with the platform's process
+list if in doubt).
+
+- [ ] **Step 5: Run the full suite (this also completes Task 1's own remaining
+  verification — see the note below; there is no separate Task 1 dispatch)**
+
+Run: `npm test`
+
+Expected: 185/185 passing (179 pre-existing + 6 in `entry.test.js`), and the command
+returns on its own within a normal test-run duration — no hang. If it does not return
+within roughly 60 seconds, treat that as a failure: stop, do not wait it out or kill-and-
+ignore it, and report BLOCKED with whatever output was captured — a second hang here
+would mean another test file has the same import-time-side-effect problem, which is
+itself a finding worth surfacing, not papering over.
+
+- [ ] **Step 6: Verify `server.js` still starts normally (production behavior preserved)**
+
+Run: `npx @modelcontextprotocol/inspector --cli node server.js --method tools/list`
+
+Expected: returns the same 6 tools (`delegate_task`, `delegate_submit`,
+`delegate_status`, `delegate_history`, `delegate_models`, `delegate_cancel`) as every
+prior certification pass, then exits on its own — proving `server.js` still boots the
+real server end-to-end after the refactor.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/cli/entry.js server.js tests/entry.test.js
+git commit -m "Fix entry.js starting a live server as an import-time side effect
+
+entry.js's main().catch(...) ran unconditionally at module load, so
+Task 1's own tests.js (which imports registerShutdownHandlers for unit
+testing) also started a real, stdio-connected MCP server that never
+exits -- hanging \`npm test\` indefinitely and leaving orphaned node.exe
+processes (reproduced directly this sprint).
+
+The import.meta.url-based entrypoint-detection idiom does not work
+here: server.js is the actual documented entrypoint and reaches
+entry.js via a re-export import, so process.argv[1] is always
+server.js's path, never entry.js's own -- that guard would have
+silently broken production startup instead.
+
+Fix: entry.js no longer calls main() itself; server.js (the one file
+whose job is being the real entrypoint) now imports and calls it
+explicitly. entry.js is now a pure module with zero import-time side
+effects, safe for tests. Verified server.js still boots the real
+server end-to-end via MCP Inspector after the change.
+
+6/6 entry.test.js tests passing, 185/185 full suite passing.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
+```
+
+---
+
+## Task 1 (historical — already implemented, folded into Task 0 above, no separate dispatch)
+
+The `registerShutdownHandlers` extraction and stdin-close handling described below were
+already implemented and left uncommitted by this plan's initial pass, before Task 0's
+bug was discovered blocking verification. Task 0's Steps 4-7 above already run this
+task's remaining verification (full suite, Inspector check) and its commit — there is
+nothing left for a separate Task 1 implementer/reviewer dispatch to do. This section is
+kept only as the original design record for `registerShutdownHandlers`.
+
+**Files (already touched, see Task 0's commit for the final state):**
+- Modified: `src/cli/entry.js`
+- Test: `tests/entry.test.js` (new file — `entry.js` had zero test coverage before this)
+
+**Problem:** `src/cli/entry.js`'s `main()` inlined its shutdown wiring:
 
 ```js
 const shutdown = (signal) => {
@@ -283,46 +445,33 @@ main().catch((err) => {
 });
 ```
 
+> **Superseded by Task 0:** the trailing `main().catch(...)` block shown above is exactly
+> the import-time side effect Task 0 removes from `entry.js` (moving the call into
+> `server.js` instead). Step 3 here is already done in the working tree — this listing is
+> historical context for how `registerShutdownHandlers` was extracted, not a step to
+> redo. Do not re-add this trailing block after Task 0 has run.
+
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `node --test tests/entry.test.js`
 
-Expected: all 5 tests pass.
+Expected: all 6 tests pass (Task 0 added the 6th, the import-side-effect regression
+test, to this same file).
 
 - [ ] **Step 5: Run the full suite**
 
 Run: `npm test`
 
-Expected: 184/184 passing (179 pre-existing + 5 new).
+Expected: 185/185 passing (179 pre-existing + 6 new in `entry.test.js`).
 
 - [ ] **Step 6: Commit**
 
-```bash
-git add src/cli/entry.js tests/entry.test.js
-git commit -m "Implement ADR-0004's stdin-close self-shutdown fix
-
-extern.js's shutdown wiring is extracted into a named, exported,
-dependency-injectable registerShutdownHandlers() function -- entry.js
-previously had zero test coverage, and this is the seam that makes it
-testable without mocking StdioServerTransport/loadConfig/the rest of
-main()'s startup sequence.
-
-Adds one new trigger alongside the existing SIGINT/SIGTERM: the
-process's own stdin ending. Per ADR-0004, the MCP SDK's
-StdioServerTransport never detects this itself, so an MCP host
-disconnecting without delivering a catchable signal (unreliable on
-Windows) previously left this process orphaned indefinitely, still
-holding stale job state -- the confirmed root-cause candidate for the
-known concurrent-dispatch job-tracking limitation.
-
-Live MCP-host process-lifecycle verification remains explicitly out of
-scope per ADR-0004 -- this task implements and unit-tests the
-mechanism only.
-
-5 new tests, 184/184 passing.
-
-Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
-```
+Task 0's own commit (Step 6 above) already includes `src/cli/entry.js`, `server.js`, and
+`tests/entry.test.js` in full — by the time Task 0 lands, there is nothing left in the
+working tree for Task 1 to separately commit. **Skip this step entirely; do not run
+`git commit` again for the same files.** (The commit message originally drafted for this
+step is superseded by Task 0's commit message, which covers both the extraction and the
+side-effect fix together.)
 
 ---
 
