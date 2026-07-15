@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { isValidJobId } from "./workspaceManager.js";
+import { TERMINAL_STATUSES, JOB_STATUS } from "../models/job.js";
 
 const STORE_VERSION = 1;
 const JSON_EXT = ".json";
@@ -42,8 +43,36 @@ export class FileJobStore {
       if (!filename.endsWith(JSON_EXT)) continue;
       const id = filename.slice(0, -JSON_EXT.length);
       if (!isValidJobId(id)) continue;
-      const raw = JSON.parse(readFileSync(join(this.dir, filename), "utf8"));
-      this.cache.set(id, raw.job);
+
+      let raw;
+      try {
+        raw = JSON.parse(readFileSync(join(this.dir, filename), "utf8"));
+      } catch (err) {
+        this.logger?.warn("FileJobStore: skipping corrupted/unparseable job file at startup", {
+          filename,
+          message: err.message,
+        });
+        continue;
+      }
+      if (raw?.storeVersion !== STORE_VERSION || !raw.job) {
+        this.logger?.warn("FileJobStore: skipping job file with missing/unrecognized storeVersion", {
+          filename,
+          storeVersion: raw?.storeVersion,
+        });
+        continue;
+      }
+
+      let job = raw.job;
+      if (!TERMINAL_STATUSES.has(job.status)) {
+        job = {
+          ...job,
+          status: JOB_STATUS.FAILED,
+          error: "process restarted before job completed",
+          finishedAt: new Date().toISOString(),
+        };
+        this._write(job); // persist the recovery so a later restart doesn't need to redo it
+      }
+      this.cache.set(id, job);
     }
   }
 

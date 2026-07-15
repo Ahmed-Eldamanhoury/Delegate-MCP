@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FileJobStore } from "../src/services/fileJobStore.js";
 import { createJob } from "../src/models/job.js";
+import { JOB_STATUS } from "../src/models/job.js";
 
 const root = mkdtempSync(join(tmpdir(), "claude-delegate-filejobstore-test-"));
 after(() => rmSync(root, { recursive: true, force: true }));
@@ -141,4 +142,68 @@ test("a write failure is caught, logged via logger.warn, and does not throw", ()
   assert.equal(warnings.length, 1);
   assert.match(warnings[0].msg, /write failed/i);
   assert.equal(warnings[0].meta.jobId, ID_A);
+});
+
+test("a corrupted (unparseable) job file is skipped during hydration, logged, and never crashes the constructor", () => {
+  const dir = freshDir();
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${ID_A}.json`), "{ not valid json");
+  const warnings = [];
+  const logger = { warn: (msg, meta) => warnings.push({ msg, meta }) };
+
+  const store = new FileJobStore({ dir, logger });
+
+  assert.deepEqual(store.list(), []);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0].msg, /corrupted|unparseable/i);
+});
+
+test("a job file with a missing or unrecognized storeVersion is skipped during hydration", () => {
+  const dir = freshDir();
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${ID_A}.json`), JSON.stringify({ storeVersion: 99, job: createJob(ID_A) }));
+  const store = new FileJobStore({ dir });
+
+  assert.deepEqual(store.list(), []);
+});
+
+test("a non-terminal job (running) recovered at hydration is rewritten to failed, deterministically, and the rewrite is persisted", () => {
+  const dir = freshDir();
+  const first = new FileJobStore({ dir });
+  const job = createJob(ID_A);
+  first.create(job);
+  first.update(ID_A, { status: JOB_STATUS.RUNNING, startedAt: new Date().toISOString() });
+
+  const second = new FileJobStore({ dir });
+
+  const recovered = second.get(ID_A);
+  assert.equal(recovered.status, JOB_STATUS.FAILED);
+  assert.equal(recovered.error, "process restarted before job completed");
+  assert.ok(recovered.finishedAt);
+  // the rewrite itself is durable -- a third instance sees the same recovered state,
+  // not "running" again
+  const third = new FileJobStore({ dir });
+  assert.equal(third.get(ID_A).status, JOB_STATUS.FAILED);
+});
+
+test("a terminal job (completed) is loaded unchanged at hydration", () => {
+  const dir = freshDir();
+  const first = new FileJobStore({ dir });
+  first.create(createJob(ID_A));
+  first.update(ID_A, { status: JOB_STATUS.COMPLETED, result: { ok: true } });
+
+  const second = new FileJobStore({ dir });
+
+  assert.equal(second.get(ID_A).status, JOB_STATUS.COMPLETED);
+  assert.deepEqual(second.get(ID_A).result, { ok: true });
+});
+
+test("a leftover .tmp file from a crash mid-write is ignored during hydration, not mistaken for a job file", () => {
+  const dir = freshDir();
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${ID_A}.json.tmp`), JSON.stringify({ storeVersion: 1, job: createJob(ID_A) }));
+
+  const store = new FileJobStore({ dir });
+
+  assert.deepEqual(store.list(), []);
 });
