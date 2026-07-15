@@ -1,14 +1,19 @@
 # ADR-0004: Server Instance Lifecycle
 
 ## Status
-**Investigated, no code change.** This ADR documents a confirmed root-cause investigation
-into the job-tracking-loss defect recorded in the prior sprint's
-[SPRINT_REPORT.md](../../SPRINT_REPORT.md) ("The Central Failure: Concurrent MCP Dispatch
-Broke Job Tracking"). Per this sprint's explicit operating rule — implement only what is
-safely completable without changing frozen public contracts and without guessing at
-unverified host behavior, otherwise produce an ADR and stop — no code change is made here.
-The recommended fix (see Decision) is deferred to a future wave pending a deliberately
-scheduled host-behavior verification.
+**Recommended fix implemented (2.2.2), live-host verification still pending.** This ADR
+originally documented a confirmed root-cause investigation into the job-tracking-loss
+defect recorded in the prior sprint's [SPRINT_REPORT.md](../../SPRINT_REPORT.md) ("The
+Central Failure: Concurrent MCP Dispatch Broke Job Tracking") with no code change, per
+that sprint's explicit operating rule. The Dogfooding Sprint that produced
+`docs/superpowers/plans/dogfooding-stdin-shutdown.md` implemented the Decision below —
+`stdin`-close routed through `registerShutdownHandlers()` in `src/cli/entry.js` — and
+verified it with unit tests against injected fakes (`tests/entry.test.js`) plus an
+MCP-Inspector check that production startup is unaffected. What remains open, unchanged
+from the original Decision: verifying this actually fires against a real MCP host's
+(Claude Desktop's) disconnect behavior was and still is out of scope — that verification
+requires deliberately disrupting a live session, not something to do incidentally. See
+`docs/releases/KNOWN_LIMITATIONS.md` for the current status of that gap.
 
 ## Context
 The prior sprint observed two concurrent `node.exe` processes both running

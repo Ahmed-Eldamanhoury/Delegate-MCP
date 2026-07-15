@@ -1,5 +1,45 @@
 # Changelog
 
+## [2.2.2] - 2026-07-15
+
+Dogfooding Sprint — implements ADR-0004's recommended stdin-close self-shutdown fix
+(deferred in 2.2.1), plus a bug found and fixed while resuming that work. Full sprint
+evidence in `docs/superpowers/plans/dogfooding-stdin-shutdown.md`.
+
+### Added
+- **Stdin-close self-shutdown** (ADR-0004's recommended fix, implemented this sprint):
+  the server now treats its own `stdin` ending as a third graceful-shutdown trigger,
+  alongside `SIGINT`/`SIGTERM`, all routed through the same `shutdown()` path. Closes the
+  scenario ADR-0004 root-caused: an MCP host disconnecting without delivering a signal
+  this process can catch (unreliable on Windows) previously left the process orphaned
+  indefinitely, still holding stale job state — the confirmed root-cause candidate for
+  the known concurrent-dispatch job-tracking limitation. The shutdown wiring is
+  extracted into an exported, dependency-injectable `registerShutdownHandlers()`
+  (`src/cli/entry.js`), covered by 6 unit tests exercising all three triggers.
+  **Live MCP-host (Claude Desktop) disconnect behavior is unverified** — the tests prove
+  the mechanism fires correctly against injected fakes, not against a real host; that
+  verification is explicitly out of scope for this sprint (see
+  `docs/superpowers/plans/dogfooding-stdin-shutdown.md`'s Global Constraints).
+
+### Fixed
+- **`entry.js` started a live server as an import-time side effect.** Discovered while
+  resuming this sprint's own plan: `main().catch(...)` ran unconditionally at module
+  load, so merely importing `registerShutdownHandlers` for unit testing also started a
+  real, `stdio`-connected MCP server that never exits — hanging `npm test` indefinitely
+  and leaving orphaned `node.exe` processes (reproduced directly this sprint). The
+  standard `import.meta.url`-based entrypoint-detection idiom does not work for this
+  repo's structure (`server.js` re-exports `entry.js`, so `process.argv[1]` is always
+  `server.js`'s path, never `entry.js`'s own). Fixed by making `entry.js` a pure module —
+  it no longer calls `main()` itself; `server.js` (the documented, sole real entrypoint)
+  now imports and calls it explicitly. Zero production behavior change, verified via MCP
+  Inspector before and after.
+
+### Compatibility
+Zero MCP schema change. No frozen contract touched (`RuntimeEventBus`, the Job lifecycle
+enum, `ExecutionContext`'s shape, `docs/FOUNDATION_FREEZE.md`/`docs/OBSERVABILITY_FREEZE.md`
+guarantees — confirmed untouched via diff, not assumed). 185/185 tests passing
+(179 pre-existing + 6 new).
+
 ## [2.2.1] - 2026-07-14
 
 Critical Stability Sprint — one reproduced High-severity crash fix, plus an investigation

@@ -13,12 +13,13 @@ document indexes them for a release audience rather than restating the evidence.
    end-to-end run. Unobserved response shapes (`tool_use`/`tool_result`, multi-turn) are
    silently skipped rather than guessed at — graceful degradation, not a crash risk, but
    broader live-traffic coverage is unverified.
-3. **A stale/orphaned `server.js` instance can silently split job-tracking state from a
-   live one** — nothing in the current startup path guards against or detects a second
-   instance, and the MCP SDK's `StdioServerTransport` never notices its own `stdin`
-   closing to self-shut-down. Root-caused, not just observed: see
-   [ADR-0004](../adr/ADR-0004-server-instance-lifecycle.md). Operating mitigation: avoid
-   batching `delegate_*` MCP calls in a single message; issue them one at a time.
+3. **The stdin-close self-shutdown fix (ADR-0004, implemented 2.2.2) is unverified against
+   a real MCP host.** The mechanism itself now exists — see "Resolved since v1.0.0" below —
+   but its unit tests prove it fires correctly against injected fakes, not that Claude
+   Desktop's actual disconnect behavior triggers it as intended (deliberately out of this
+   sprint's scope; a live-session-disrupting experiment, not one to run incidentally). Until
+   that verification happens, the operating mitigation from prior sprints stays in force:
+   avoid batching `delegate_*` MCP calls in a single message; issue them one at a time.
 
 ## Resolved since v1.0.0
 
@@ -37,6 +38,10 @@ document indexes them for a release audience rather than restating the evidence.
   (fixed 2.2.1): reproduced on a real machine, then fixed by attaching an `"error"`
   listener to the spawned terminal process instead of leaving it unhandled. See
   `CHANGELOG.md`'s 2.2.1 entry.
+- **A stale/orphaned `server.js` instance could silently split job-tracking state from a
+  live one** (mechanism implemented 2.2.2): the server now treats its own `stdin` ending
+  as a third graceful-shutdown trigger alongside `SIGINT`/`SIGTERM`. See `CHANGELOG.md`'s
+  2.2.2 entry and limitation 3 above for what remains unverified.
 
 ## Current scope boundaries
 
