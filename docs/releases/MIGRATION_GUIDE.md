@@ -36,7 +36,7 @@ that tool's own input/output schema is what `FOUNDATION_FREEZE.md` governs. The 
 
 ## Frozen contracts
 
-- [FOUNDATION_FREEZE.md](../FOUNDATION_FREEZE.md) — 6 MCP tools, schemas, execution contract, job lifecycle, `ExecutionContext`.
+- [FOUNDATION_FREEZE.md](../FOUNDATION_FREEZE.md) — 7 MCP tools, schemas, execution contract, job lifecycle, `ExecutionContext`.
 - [ADR-0001](../adr/ADR-0001-workspace-and-artifact-architecture.md) — Workspace layout and security model.
 - [ADR-0002](../adr/ADR-0002-streaming-and-event-architecture.md) — `RuntimeEventBus` contract, event schema, streaming.
 - [ADR-0003](../adr/ADR-0003-observability-architecture.md) / [OBSERVABILITY_FREEZE.md](../OBSERVABILITY_FREEZE.md) — Observability's public method set and data shapes.
