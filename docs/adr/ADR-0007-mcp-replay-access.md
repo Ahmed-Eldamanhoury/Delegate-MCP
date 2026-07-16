@@ -2,11 +2,109 @@
 
 ## Status
 
-**Proposed — pending user sign-off before implementation.** Written per
-`CAPABILITY_ROADMAP.md`'s ranking (Rank 1 of 9 evaluated candidates) and
-`REPLAY_ACCESS_ARCHITECTURE_REVIEW.md`'s architecture readiness / dependency verification /
-reuse analysis / no-duplication analysis — all performed before this Decision was drafted, per
-the same process `ADR-0005` and `ADR-0006` used.
+**Frozen — approved in principle, implementation gated on the Platform Transport-Agnosticism
+Verification below.** Written per `CAPABILITY_ROADMAP.md`'s ranking (Rank 1 of 9 evaluated
+candidates) and `REPLAY_ACCESS_ARCHITECTURE_REVIEW.md`'s architecture readiness / dependency
+verification / reuse analysis / no-duplication analysis — all performed before this Decision
+was drafted, per the same process `ADR-0005` and `ADR-0006` used. A second verification round
+(below) checks the Decision as written against six platform-level principles — treating
+`delegate_replay` as the first of several transports this same service layer must serve, not a
+one-off — before implementation begins.
+
+## Platform Transport-Agnosticism Verification (performed against the Decision below, before implementation)
+
+The user's framing for this round: `delegate_replay` is **the first public access layer for the
+Observability platform**, not a one-off MCP tool — its design must not create anything a future
+Dashboard, REST API, Web UI, Analytics feature, or Plugin API would have to route around, undo,
+or duplicate. Six principles, checked against the actual Decision text above (not a redesign —
+this section audits what's already written).
+
+### 1. Is `delegate_replay` a thin transport adapter only — no replay/filtering/persistence/business logic?
+
+**Yes.** The handler (Decision, lines 47-57) does exactly three things: destructure
+`observabilityService.replay(job_id)`'s return value, build a human-readable string from fields
+that value already carries (`source`, `timeline[].timestamp`/`.type`/`.synthetic`), and return
+both. There is no branch that changes *what* is fetched, no filter applied to `timeline` before
+returning it, no write of any kind. The text-building `if/else` is presentation formatting for
+MCP's `content[0].text` channel — not a decision about replay data, exactly mirroring
+`delegateStatusHandler.js`'s own `summary` string (built the identical way, from `toJobView`'s
+already-fetched fields, never questioned as "business logic" in six prior tools).
+
+### 2. Does all replay behavior continue to live inside `ReplayEngine`/`ObservabilityService`? Does the tool only validate input, invoke, and return?
+
+**Yes.** Zero lines change in `src/services/replayEngine.js`, `observabilityService.js`,
+`timelineStore.js`, or `eventHistoryStore.js` (Goals, line 31-33; Compatibility impact, line
+140-141). "Validate input" is not hand-rolled in the handler — it's already satisfied
+structurally by reusing `JOB_ID_FIELD` (Decision, line 71), the same zod schema
+`delegate_status`/`delegate_cancel` already use, enforced by the MCP SDK *before* the handler
+runs at all. By the time `delegateReplayHandler` calls `replay(job_id)`, `job_id` is a plain
+validated string — the handler adds no validation code of its own because none is needed beyond
+what the existing schema-reuse already provides.
+
+### 3. Is the contract designed so the same service layer is reusable unchanged by Dashboard/REST API/Web UI/Analytics/Plugin API?
+
+**Yes — and this property predates this ADR.** `ADR-0003` built `ObservabilityService` as a
+transport-agnostic façade specifically so *"a future Dashboard (in any form) calls
+`getSnapshot()`/`getTimeline()`/`replay()` and renders the result"* (`ADR-0003:274-278`) — this
+ADR does not need to invent that property, only refrain from breaking it. Checked concretely: a
+hypothetical `GET /jobs/:id/replay` REST endpoint would call `observabilityService.replay(job_id)`
+directly and serialize `{source, timeline}` as its JSON body — it would not call
+`delegateReplayHandler` at all, would not need `JOB_ID_FIELD` (its own path param does that job),
+and would not need the human-readable `text` string (HTTP JSON has no equivalent channel). None
+of `delegateReplayHandler`'s three concerns (MCP schema, MCP response envelope, human-readable
+text) are things a REST/Dashboard/Plugin consumer would ever import or depend on — they'd all
+route through `observabilityService.replay()` directly, exactly as designed two sprints ago.
+
+### 4. Does the design avoid introducing MCP-specific types into the replay subsystem?
+
+**Yes, confirmed by import trace.** `JOB_ID_FIELD` (a `zod` schema) is defined and used only in
+`src/server/mcpServer.js` — never imported by `replayEngine.js`, `observabilityService.js`, or
+any other replay-subsystem file. The MCP SDK validates the tool call's input against that schema
+*before* `delegateReplayHandler` is invoked; the handler itself receives and passes along a
+plain `string`, and `observabilityService.replay()`'s signature (`(jobId: string) => {source,
+timeline}`) is untouched — it has never known about zod, MCP, or any transport concept, and
+this ADR keeps it that way.
+
+### 5. Can pagination/filtering/search be added later as extensible parameters, without a breaking change?
+
+**Yes — structurally, not by accident.** `inputSchema: { job_id: JOB_ID_FIELD }` (Decision, line
+71) is a zod *object* shape. Adding new keys to it later (e.g. `type`, `since`, `limit`,
+`cursor`) is non-breaking by construction: an existing caller that omits a new optional field is
+unaffected, and `docs/FOUNDATION_FREEZE.md`'s own versioning policy already classifies *"new
+optional field"* as **minor** (not the kind of change requiring reconsideration of any frozen
+guarantee). This ADR deliberately ships with none of those fields today (Explicitly out of
+scope, line 98-100) — per this codebase's own consistent discipline against unrequested
+parameters (`ADR-0003`'s `ConsumerRegistry`: *"not built speculatively... a scoped addition at
+that time, not now"*) — but the schema shape itself imposes no future migration cost when a
+real need for one appears.
+
+### 6. Does implementing `delegate_replay` reduce — not increase — future work for Dashboard/REST?
+
+**Reduces risk and provides a validated precedent; does not literally write code those
+transports could reuse (an honest distinction, not an overclaim).** Concretely:
+- It does not increase future work: nothing about this ADR couples any future transport to
+  `delegateReplayHandler.js`, `JOB_ID_FIELD`, or MCP's `{content, structuredContent}` shape — a
+  future REST endpoint's handler would be written against `observabilityService.replay()`
+  directly, untouched by whatever exists in `src/handlers/` or `src/server/mcpServer.js`.
+  There is nothing here to "undo."
+  - It reduces future risk: this is the *first real, working proof* that
+  `ObservabilityService`'s API is genuinely callable by an external-facing transport without
+  modification — a claim `ADR-0003` made two years of ADRs ago but that, until this wave, no
+  concrete consumer had ever tested. A future Dashboard/REST implementer inherits a working
+  example (however transport-specific its edges are) rather than a purely theoretical claim.
+  - It does *not* reduce the literal amount of HTTP-routing/UI/auth code a future Dashboard/REST
+  wave will have to write — that work is transport-specific and orthogonal to this ADR by
+  design (per Q3 above). Framing this ADR as "shrinking" that future work would overclaim; the
+  honest claim is *de-risking*, not code-sharing beyond the service layer both already share.
+
+### Conclusion
+
+All six principles hold against the Decision as already written — **no redesign was required**,
+because the property being verified (`ObservabilityService` as a transport-agnostic façade) was
+established by `ADR-0003` before this ADR existed; this ADR's obligation was only to not
+undermine it, and it doesn't. No architecture change affecting future transports was discovered
+— the stop-and-ask trigger does not fire. **Proceed with the existing implementation plan
+(`docs/superpowers/plans/mcp-replay-access.md`) exactly as written.**
 
 ## Context
 
