@@ -29,6 +29,7 @@ export const DEFAULT_MAX_BUDGET_USD = 1;
 export const DEFAULT_MAX_CONCURRENT_JOBS = 2;
 export const DEFAULT_MAX_JOB_HISTORY = 500;
 export const DEFAULT_MAX_WORKSPACE_HISTORY = 100;
+export const DEFAULT_MAX_EVENT_HISTORY_FILES = 100;
 
 /**
  * @typedef {Object} DelegateConfig
@@ -46,6 +47,7 @@ export const DEFAULT_MAX_WORKSPACE_HISTORY = 100;
  * @property {string} jobStoreDir
  * @property {"memory"|"file"} eventHistory
  * @property {string} eventHistoryDir
+ * @property {number} maxEventHistoryFiles
  * @property {boolean} debugMode
  */
 
@@ -76,6 +78,8 @@ export function loadConfig(env = process.env) {
     jobStoreDir: env.CLAUDE_DELEGATE_JOB_STORE_DIR || DEFAULT_JOB_STORE_DIR,
     eventHistory: env.CLAUDE_DELEGATE_EVENT_HISTORY || "memory",
     eventHistoryDir: env.CLAUDE_DELEGATE_EVENT_HISTORY_DIR || DEFAULT_EVENT_HISTORY_DIR,
+    maxEventHistoryFiles:
+      Number(env.CLAUDE_DELEGATE_MAX_EVENT_HISTORY_FILES) || DEFAULT_MAX_EVENT_HISTORY_FILES,
     debugMode: env[DEBUG_MODE_ENV_VAR] === "true",
   });
 }

@@ -40,6 +40,9 @@ export function validateConfig(config) {
   if (!config.eventHistoryDir || typeof config.eventHistoryDir !== "string") {
     problems.push("eventHistoryDir must be a non-empty string");
   }
+  if (!Number.isInteger(config.maxEventHistoryFiles) || config.maxEventHistoryFiles <= 0) {
+    problems.push("maxEventHistoryFiles must be a positive integer");
+  }
 
   if (problems.length > 0) {
     throw new ConfigError(`Invalid configuration: ${problems.join("; ")}`);

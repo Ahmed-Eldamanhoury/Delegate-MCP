@@ -72,3 +72,19 @@ test("loadConfig's eventHistory/eventHistoryDir defaults are backward compatible
   assert.match(config.eventHistoryDir, /event-history$/);
   assert.doesNotThrow(() => validateConfig(config));
 });
+
+test("validateConfig rejects a non-positive maxEventHistoryFiles", () => {
+  const config = { ...loadConfig({}), maxEventHistoryFiles: 0 };
+  assert.throws(() => validateConfig(config), ConfigError);
+});
+
+test("validateConfig rejects a non-integer maxEventHistoryFiles", () => {
+  const config = { ...loadConfig({}), maxEventHistoryFiles: 1.5 };
+  assert.throws(() => validateConfig(config), ConfigError);
+});
+
+test("loadConfig's maxEventHistoryFiles default is backward compatible -- pins today's default (100, matching maxWorkspaceHistory) so a future change is a deliberate, visible diff", () => {
+  const config = loadConfig({});
+  assert.equal(config.maxEventHistoryFiles, 100);
+  assert.doesNotThrow(() => validateConfig(config));
+});

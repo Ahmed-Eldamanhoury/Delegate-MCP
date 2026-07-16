@@ -61,7 +61,7 @@ export function selectJobStore(config, logger) {
 export function wireEventHistoryIfEnabled({ bus, config, logger }) {
   if (config.eventHistory !== "file") return undefined;
   const eventHistoryStore = createEventHistoryStore({ dir: config.eventHistoryDir, logger });
-  return wireEventHistoryToEventBus({ bus, eventHistoryStore });
+  return wireEventHistoryToEventBus({ bus, eventHistoryStore, maxFiles: config.maxEventHistoryFiles });
 }
 
 /**

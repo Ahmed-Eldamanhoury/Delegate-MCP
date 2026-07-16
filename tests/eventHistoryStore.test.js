@@ -1,6 +1,6 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, existsSync, readFileSync, mkdirSync, writeFileSync, appendFileSync } from "node:fs";
+import { mkdtempSync, rmSync, existsSync, readFileSync, mkdirSync, writeFileSync, appendFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createEventHistoryStore } from "../src/services/eventHistoryStore.js";
@@ -14,7 +14,15 @@ function freshDir() {
 
 const ID_A = "3562f8cf-6ebc-4573-a009-4fb5b58f2fc3";
 const ID_B = "7a1c9e2d-4b3f-4a5e-9c1d-2f6b8a0e5d4c";
+const ID_C = "1d2e3f4a-5b6c-4d7e-8f9a-0b1c2d3e4f5a";
+const ID_D = "9f8e7d6c-5b4a-4392-8170-6f5e4d3c2b1a";
 const INVALID_ID = "not-a-uuid";
+
+/** Backdates a file's mtime by `offsetSeconds` so prune()'s oldest-first sort is deterministic in tests. */
+function setMtime(filePath, offsetSeconds) {
+  const t = new Date(Date.now() - offsetSeconds * 1000);
+  utimesSync(filePath, t, t);
+}
 
 test("append() creates <dir>/<jobId>.jsonl and writes one JSON line per call", () => {
   const dir = freshDir();
@@ -233,4 +241,73 @@ test("append() with null/undefined jobId in event throws or logs gracefully", ()
   // Should log the error
   assert.equal(logs.length, 1);
   assert.match(logs[0].msg, /failed/i);
+});
+
+test("prune() evicts the oldest-by-mtime files beyond maxFiles, considering only known-terminal job ids", () => {
+  const dir = freshDir();
+  const store = createEventHistoryStore({ dir });
+
+  // Four jobs, all confirmed terminal, oldest to newest: A, B, C, D.
+  for (const id of [ID_A, ID_B, ID_C, ID_D]) {
+    store.append({ jobId: id, type: "completed" });
+  }
+  setMtime(join(dir, `${ID_A}.jsonl`), 40);
+  setMtime(join(dir, `${ID_B}.jsonl`), 30);
+  setMtime(join(dir, `${ID_C}.jsonl`), 20);
+  setMtime(join(dir, `${ID_D}.jsonl`), 10);
+
+  const terminalJobIds = new Set([ID_A, ID_B, ID_C, ID_D]);
+  const evicted = store.prune({ maxFiles: 2, terminalJobIds });
+
+  assert.deepEqual(evicted.sort(), [ID_A, ID_B].sort());
+  assert.equal(existsSync(join(dir, `${ID_A}.jsonl`)), false);
+  assert.equal(existsSync(join(dir, `${ID_B}.jsonl`)), false);
+  assert.ok(existsSync(join(dir, `${ID_C}.jsonl`)));
+  assert.ok(existsSync(join(dir, `${ID_D}.jsonl`)));
+});
+
+test("prune() never evicts a file whose job id is not in terminalJobIds, even if it is the oldest by mtime", () => {
+  const dir = freshDir();
+  const store = createEventHistoryStore({ dir });
+
+  // ID_A is in-flight (its terminal event has never been observed) and objectively the
+  // oldest file on disk -- it must never be a candidate, structurally, regardless of cap.
+  for (const id of [ID_A, ID_B, ID_C, ID_D]) {
+    store.append({ jobId: id, type: "progress" });
+  }
+  setMtime(join(dir, `${ID_A}.jsonl`), 100); // oldest of all, but NOT terminal
+  setMtime(join(dir, `${ID_B}.jsonl`), 30);
+  setMtime(join(dir, `${ID_C}.jsonl`), 20);
+  setMtime(join(dir, `${ID_D}.jsonl`), 10);
+
+  const terminalJobIds = new Set([ID_B, ID_C, ID_D]); // ID_A deliberately excluded
+  const evicted = store.prune({ maxFiles: 1, terminalJobIds });
+
+  assert.ok(!evicted.includes(ID_A));
+  assert.ok(existsSync(join(dir, `${ID_A}.jsonl`)), "in-flight job's file must survive prune");
+  assert.deepEqual(evicted.sort(), [ID_B, ID_C].sort());
+  assert.ok(existsSync(join(dir, `${ID_D}.jsonl`)));
+});
+
+test("prune() is a no-op when the number of terminal files is within maxFiles", () => {
+  const dir = freshDir();
+  const store = createEventHistoryStore({ dir });
+
+  store.append({ jobId: ID_A, type: "completed" });
+  store.append({ jobId: ID_B, type: "completed" });
+
+  const evicted = store.prune({ maxFiles: 5, terminalJobIds: new Set([ID_A, ID_B]) });
+
+  assert.deepEqual(evicted, []);
+  assert.ok(existsSync(join(dir, `${ID_A}.jsonl`)));
+  assert.ok(existsSync(join(dir, `${ID_B}.jsonl`)));
+});
+
+test("prune() is a safe no-op when the event-history dir doesn't exist yet", () => {
+  const dir = freshDir();
+  const store = createEventHistoryStore({ dir });
+
+  const evicted = store.prune({ maxFiles: 1, terminalJobIds: new Set([ID_A]) });
+
+  assert.deepEqual(evicted, []);
 });
