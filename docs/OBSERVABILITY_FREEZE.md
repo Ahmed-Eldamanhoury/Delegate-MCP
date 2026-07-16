@@ -62,9 +62,12 @@ original object nor a `listConsumers()` result can be mutated to corrupt the reg
 - `RuntimeEventBus`'s `subscribeAll()` contract is the only coupling point; Observability never
   becomes a second source of truth for job state (`JobManager` remains authoritative per
   `FOUNDATION_FREEZE.md`).
-- Zero MCP schema impact: no tool currently exposes any Observability data. When one eventually
-  does, that tool's schema is what `FOUNDATION_FREEZE.md` governs — this document governs only
-  the internal `ObservabilityService` contract those future tools would call into.
+- Zero MCP schema impact from this document's own contract: `delegate_replay` (ADR-0007) now
+  exposes `ObservabilityService.replay()` specifically, but that tool's own input/output schema
+  is what `FOUNDATION_FREEZE.md` governs, not this document — this document governs only the
+  internal `ObservabilityService` contract that tool (and any future one) calls into. The rest
+  of the surface (`getMetrics()`/`getSnapshot()`/`getTimeline()`/`ConsumerRegistry`) still has
+  no MCP tool exposing it.
 - `TimelineStore`/`MetricsCollector` bookkeeping is bounded (oldest-terminal-first eviction,
   O(1) incremental aggregates) — a compatibility guarantee about *behavior* (never unbounded
   memory growth), not about specific internal data structures.
