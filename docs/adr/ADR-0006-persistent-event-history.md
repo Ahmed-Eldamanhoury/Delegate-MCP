@@ -2,7 +2,12 @@
 
 ## Status
 
-**Proposed — pending user sign-off before implementation.** Written per the recommendation
+**Frozen — approved for implementation** (2026-07-16, after two review passes: initial
+Architectural Verification, then a Final Pre-Implementation Verification answering five
+technical questions with repository evidence — see below). Implementation follows in
+`docs/superpowers/plans/persistent-event-history.md`.
+
+Written per the recommendation
 in `RECOMMENDATION.md` (Observability Architecture Review): extend the existing
 `ObservabilityService`/`ReplayEngine` stack rather than replace it. Two verification rounds
 performed before this document is put forward for sign-off: an initial Architectural
