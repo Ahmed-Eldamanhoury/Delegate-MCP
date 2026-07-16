@@ -28,8 +28,11 @@ No config migration, no data migration, no `claude_desktop_config.json` change i
 Guaranteed by [docs/FOUNDATION_FREEZE.md](../FOUNDATION_FREEZE.md): tool names, input schemas,
 the blocking/non-blocking execution contract, the job lifecycle, and the `ExecutionContext`
 shape are all frozen. `docs/OBSERVABILITY_FREEZE.md` extends the same discipline to
-`ObservabilityService`'s internal contract (not yet exposed through any tool, so it carries no
-external compatibility surface yet).
+`ObservabilityService`'s internal contract. One MCP tool, `delegate_replay`
+([ADR-0007](../adr/ADR-0007-mcp-replay-access.md)), now exposes `replay()` specifically —
+that tool's own input/output schema is what `FOUNDATION_FREEZE.md` governs. The rest of
+`ObservabilityService`'s surface (`getMetrics()`/`getSnapshot()`/`getTimeline()`/
+`ConsumerRegistry`) still carries no external compatibility surface, since nothing exposes it.
 
 ## Frozen contracts
 

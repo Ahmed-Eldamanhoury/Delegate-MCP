@@ -234,16 +234,22 @@ execution.
 - Wired once in `mcpServer.js`, `maxTimelineHistory` defaulted to `config.maxJobHistory` (no
   new config field for Phase 1).
 - `ReplayEngine`, `SnapshotBuilder`, `ConsumerRegistry` (Phase 2, v1.9.0) round out the
-  platform: replay reconstructs a job's history (runtime full-fidelity, workspace coarse
-  fallback via `metadata.json`, entries marked `synthetic: true`, or `unavailable` —
-  read-only, deterministic, never duplicates stored data); snapshots are
+  platform: replay reconstructs a job's history (`runtime` full-fidelity while retained in
+  `TimelineStore`, `durable` full-fidelity from `EventHistoryStore`'s on-disk log if
+  `CLAUDE_DELEGATE_EVENT_HISTORY=file` was enabled — see
+  [ADR-0006](adr/ADR-0006-persistent-event-history.md) — `workspace` coarse fallback via
+  `metadata.json`, entries marked `synthetic: true`, or `unavailable` — read-only,
+  deterministic, never duplicates stored data); snapshots are
   `structuredClone()` + recursively `Object.freeze()`d (`{takenAt, metrics, activeJobs}`,
   `activeJobs` sourced from `MetricsCollector.getActiveJobs()`, itself event-derived, never a
   `JobManager` query); `ConsumerRegistry` is pure in-memory registration/health/statistics
   bookkeeping with no transport layer of its own.
-- Not yet exposed via any MCP tool — Dashboard/REST API/plugin/future-MCP-tool consumption
-  remains future work. Frozen public contracts:
-  [OBSERVABILITY_FREEZE.md](OBSERVABILITY_FREEZE.md).
+- `replay()` now has its first external consumer: the `delegate_replay` MCP tool
+  ([ADR-0007](adr/ADR-0007-mcp-replay-access.md)), a thin transport adapter with no
+  replay/filtering/persistence logic of its own. Every other method
+  (`getMetrics()`/`getSnapshot()`/`getTimeline()`/`ConsumerRegistry`) is still not exposed via
+  any MCP tool — Dashboard/REST API/plugin/future-MCP-tool consumption of those remains future
+  work. Frozen public contracts: [OBSERVABILITY_FREEZE.md](OBSERVABILITY_FREEZE.md).
 
 ## Workspace (persistence layer)
 
