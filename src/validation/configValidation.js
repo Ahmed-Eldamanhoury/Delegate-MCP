@@ -34,6 +34,12 @@ export function validateConfig(config) {
   if (!config.jobStoreDir || typeof config.jobStoreDir !== "string") {
     problems.push("jobStoreDir must be a non-empty string");
   }
+  if (!["memory", "file"].includes(config.eventHistory)) {
+    problems.push('eventHistory must be "memory" or "file"');
+  }
+  if (!config.eventHistoryDir || typeof config.eventHistoryDir !== "string") {
+    problems.push("eventHistoryDir must be a non-empty string");
+  }
 
   if (problems.length > 0) {
     throw new ConfigError(`Invalid configuration: ${problems.join("; ")}`);

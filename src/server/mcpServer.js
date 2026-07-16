@@ -8,6 +8,8 @@ import { FileJobStore } from "../services/fileJobStore.js";
 import { createRuntimeEventBus } from "../services/runtimeEventBus.js";
 import { wireWorkspaceToEventBus } from "../services/workspaceEventBridge.js";
 import { createObservabilityService } from "../services/observabilityService.js";
+import { createEventHistoryStore } from "../services/eventHistoryStore.js";
+import { wireEventHistoryToEventBus } from "../services/eventHistoryBridge.js";
 import { createDelegateTaskHandler } from "../handlers/delegateTaskHandler.js";
 import { createDelegateSubmitHandler } from "../handlers/delegateSubmitHandler.js";
 import { createDelegateStatusHandler } from "../handlers/delegateStatusHandler.js";
@@ -48,6 +50,21 @@ export function selectJobStore(config, logger) {
 }
 
 /**
+ * Constructs an `EventHistoryStore` and wires it into the bus per `config.eventHistory`
+ * (ADR-0006), mirroring `selectJobStore`'s shape: extracted as its own exported function so
+ * it's unit-testable without constructing a full McpServer. When `config.eventHistory` is
+ * unset or `"memory"` this is a no-op -- nothing new runs, default behavior stays byte-identical
+ * to before this feature existed.
+ * @param {{bus: object, config: import("../config/index.js").DelegateConfig, logger?: {warn: Function}}} deps
+ * @returns {(() => void)|undefined} unsubscribe, or undefined when eventHistory is not "file"
+ */
+export function wireEventHistoryIfEnabled({ bus, config, logger }) {
+  if (config.eventHistory !== "file") return undefined;
+  const eventHistoryStore = createEventHistoryStore({ dir: config.eventHistoryDir, logger });
+  return wireEventHistoryToEventBus({ bus, eventHistoryStore });
+}
+
+/**
  * @param {{config: import("../config/index.js").DelegateConfig, logger: ReturnType<import("../logging/logger.js").createLogger>, version: string}} deps
  */
 export function createMcpServer({ config, logger, version }) {
@@ -73,6 +90,10 @@ export function createMcpServer({ config, logger, version }) {
   // is needed here. Not yet exposed via any MCP tool; this wave wires the service itself, not
   // a consumer of it.
   createObservabilityService({ bus, config, logger, maxTimelineHistory: config.maxJobHistory });
+
+  // ADR-0006: EventHistoryStore is a new, independent bus.subscribeAll() consumer, opt-in via
+  // config.eventHistory (default "memory" = off, byte-identical to before this feature existed).
+  wireEventHistoryIfEnabled({ bus, config, logger });
 
   server.registerTool(
     "delegate_task",

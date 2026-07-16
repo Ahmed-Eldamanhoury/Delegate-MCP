@@ -50,3 +50,25 @@ test("loadConfig's defaults are backward compatible: no env vars produces the ex
   assert.equal(config.jobStore, "memory");
   assert.match(config.jobStoreDir, /job-store$/);
 });
+
+test("validateConfig rejects an unrecognized eventHistory value", () => {
+  const config = { ...loadConfig({}), eventHistory: "sqlite" };
+  assert.throws(() => validateConfig(config), ConfigError);
+});
+
+test("validateConfig rejects an empty eventHistoryDir", () => {
+  const config = { ...loadConfig({}), eventHistoryDir: "" };
+  assert.throws(() => validateConfig(config), ConfigError);
+});
+
+test("validateConfig accepts eventHistory explicitly set to 'file' with a valid eventHistoryDir", () => {
+  const config = { ...loadConfig({}), eventHistory: "file", eventHistoryDir: "/tmp/whatever" };
+  assert.doesNotThrow(() => validateConfig(config));
+});
+
+test("loadConfig's eventHistory/eventHistoryDir defaults are backward compatible -- this test pins today's default values so a future change to them is a deliberate, visible diff", () => {
+  const config = loadConfig({});
+  assert.equal(config.eventHistory, "memory");
+  assert.match(config.eventHistoryDir, /event-history$/);
+  assert.doesNotThrow(() => validateConfig(config));
+});
