@@ -107,8 +107,8 @@ export function createMcpServer({ config, logger, version }) {
   // read-only by construction (Passive Observation Rule) — it holds no reference to
   // jobManager or claudeCliService, only the bus. Its subscription closures live inside the
   // bus itself (same pattern wireWorkspaceToEventBus already uses above), so no local binding
-  // is needed here. Not yet exposed via any MCP tool; this wave wires the service itself, not
-  // a consumer of it.
+  // is needed here. ADR-0007's delegate_replay (registered below) is now its first MCP
+  // consumer, calling replay() specifically; every other method still has none.
   //
   // Task 5: the instance itself IS kept (returned below, alongside `server`) so its close()
   // (unsubscribe from the bus) is reachable during graceful shutdown -- previously constructed
