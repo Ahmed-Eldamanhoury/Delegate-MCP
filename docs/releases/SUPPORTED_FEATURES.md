@@ -23,7 +23,7 @@ See linked docs for the underlying evidence.
 | Prometheus Exporter | **Future** | Contract designed, not implemented |
 | Grafana Adapter | **Future** | Contract designed, not implemented |
 | Plugin SDK | **Future** | No design exists yet beyond "future consumers depend only on `ObservabilityService`" |
-| Future MCP tools (e.g. `delegate_metrics`) | **Future** | Contract pattern designed (mirrors `delegate_status`'s relationship to `JobManager`), not implemented |
+| Future MCP tools (e.g. a future analytics/search tool) | **Future** | Contract pattern designed (mirrors `delegate_status`'s relationship to `JobManager`), not implemented — `delegate_metrics` is no longer an example here, see its own **Stable** row above |
 | Persistent job store (non-in-memory) | **Stable, opt-in** | `FileJobStore` implements the `JobStore` interface; default remains in-memory, opt in via `CLAUDE_DELEGATE_JOB_STORE=file`. See [ADR-0005](../adr/ADR-0005-persistent-job-store.md). |
 | Durable full-fidelity replay (`<job-id>.jsonl`) | **Stable, opt-in** | `EventHistoryStore` persists every job's events to a per-job `<job-id>.jsonl`; `ReplayEngine` gained a `"durable"` tier that reads it; default remains off, opt in via `CLAUDE_DELEGATE_EVENT_HISTORY=file`. See [ADR-0006](../adr/ADR-0006-persistent-event-history.md). |
 | `ConsumerRegistry` auto-expiry/TTL | **Deferred** | `touch()`/health fields exist to support it later; not built speculatively (see [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md)) |

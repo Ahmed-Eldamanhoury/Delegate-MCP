@@ -18,7 +18,7 @@ welcome via pull request, but note there is currently no CI configured — revie
 
 1. Run `npm test` before and after your change — the full suite must pass.
 2. Update `CHANGELOG.md` for any user-visible change, following the existing entry format.
-3. If you touch a frozen contract (the 7 MCP tools' schemas, the job lifecycle,
+3. If you touch a frozen contract (the 8 MCP tools' schemas, the job lifecycle,
    `ExecutionContext`, `RuntimeEventBus`, or `ObservabilityService`'s public methods), explain
    why in the PR description and reference the relevant ADR or freeze document.
 4. Open a pull request. Keep it scoped — this project has deliberately avoided speculative
