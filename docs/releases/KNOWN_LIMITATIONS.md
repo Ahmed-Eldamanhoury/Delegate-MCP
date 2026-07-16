@@ -100,5 +100,8 @@ durable full-fidelity replay are no longer deferred — see "Resolved since v1.0
 ## Future extensions
 
 Web Dashboard, REST API, CLI Dashboard, VS Code Extension, Prometheus Exporter, Grafana
-Adapter, Plugin SDK, future MCP tools — all contract-designed in ADR-0003, none implemented.
+Adapter, Plugin SDK — all contract-designed in ADR-0003, none implemented. (`delegate_replay`,
+the first `ObservabilityService`-backed MCP tool, is no longer future work — see "Resolved
+since v1.0.0" above and [ADR-0007](../adr/ADR-0007-mcp-replay-access.md). Additional future MCP
+tools, e.g. `delegate_metrics`, remain unimplemented.)
 See [ROADMAP_v1.1.md](ROADMAP_v1.1.md).
