@@ -10,10 +10,10 @@ const JSON_EXT = ".json";
  * File-backed implementation of {@link import("./jobStore.js").JobStore} — one JSON file
  * per job under `dir`, atomic writes (temp file + rename, never a direct write to the
  * final path), an in-memory cache hydrated once at construction so get()/list() never
- * touch disk on the read path. See docs/adr/ADR-0005-persistent-job-store.md for the
- * full design rationale, including why hydration in *this* file is intentionally naive
- * (no corrupted-file handling, no non-terminal-job recovery) -- see
- * docs/services/fileJobStore.js's own Task 3 addendum once that lands.
+ * touch disk on the read path. Hydration skips corrupted/unparseable files and files
+ * with a missing or unrecognized `storeVersion` (logged, never thrown), and rewrites any
+ * non-terminal job to `failed` (no live subprocess survives a restart to complete it).
+ * See docs/adr/ADR-0005-persistent-job-store.md for the full design rationale.
  * @implements {import("./jobStore.js").JobStore}
  */
 export class FileJobStore {
