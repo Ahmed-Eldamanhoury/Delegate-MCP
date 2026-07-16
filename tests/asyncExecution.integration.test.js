@@ -12,7 +12,11 @@ import { createDelegateSubmitHandler } from "../src/handlers/delegateSubmitHandl
 import { createDelegateStatusHandler } from "../src/handlers/delegateStatusHandler.js";
 import { createDelegateHistoryHandler } from "../src/handlers/delegateHistoryHandler.js";
 import { createDelegateCancelHandler } from "../src/handlers/delegateCancelHandler.js";
-import { waitUntil } from "./testUtils.js";
+import { createDelegateReplayHandler } from "../src/handlers/delegateReplayHandler.js";
+import { createRuntimeEventBus } from "../src/services/runtimeEventBus.js";
+import { createObservabilityService } from "../src/services/observabilityService.js";
+import { EVENT_TYPES } from "../src/models/runtimeEvent.js";
+import { waitUntil, delayTask } from "./testUtils.js";
 
 // Handlers go through the real delegationService -> RuntimeEventBus -> workspaceManager (not
 // stubbed) so these tests also exercise real disk I/O — but isolated to a temp dir, never the
@@ -330,4 +334,65 @@ test("workspace: pruneWorkspaces keeps disk usage bounded across many completed 
 
   const remaining = readdirSync(jobsDir);
   assert.ok(remaining.length <= 3, `expected at most 3 workspaces retained, found ${remaining.length}`);
+});
+
+test("delegate_replay: a completed job replays with source 'runtime' and full event sequence", async () => {
+  const bus = createRuntimeEventBus();
+  const jobManager = new JobManager({ bus });
+  const observability = createObservabilityService({ bus });
+  const replay = createDelegateReplayHandler({ observabilityService: observability });
+
+  const jobId = jobManager.submit(delayTask(5, "result"));
+  await waitUntil(() => jobManager.getJob(jobId).status === "completed");
+
+  const response = await replay({ job_id: jobId });
+
+  // Response shape: content (human-readable text) + structuredContent (machine-readable)
+  assert.ok(response.content);
+  assert.ok(Array.isArray(response.content));
+  assert.equal(response.content[0].type, "text");
+  assert.ok(typeof response.content[0].text === "string");
+  assert.ok(response.structuredContent);
+
+  // Structured content: source and timeline
+  assert.equal(response.structuredContent.source, "runtime");
+  assert.ok(Array.isArray(response.structuredContent.timeline));
+
+  // Full fidelity: JobQueued, JobStateChanged ×2, JobCompleted
+  assert.deepEqual(
+    response.structuredContent.timeline.map((e) => e.type),
+    [EVENT_TYPES.JOB_QUEUED, EVENT_TYPES.JOB_STATE_CHANGED, EVENT_TYPES.JOB_STATE_CHANGED, EVENT_TYPES.JOB_COMPLETED]
+  );
+
+  // Text should mention source and event count
+  assert.match(response.content[0].text, /runtime/);
+  assert.match(response.content[0].text, /4 events/);
+
+  // Must NOT be an error response
+  assert.equal(response.isError, undefined);
+});
+
+test("delegate_replay: an unknown job returns source 'unavailable' with empty timeline, non-error", async () => {
+  const bus = createRuntimeEventBus();
+  const observability = createObservabilityService({ bus });
+  const replay = createDelegateReplayHandler({ observabilityService: observability });
+
+  const response = await replay({ job_id: "unknown-job-id-12345" });
+
+  // Response shape: content (human-readable text) + structuredContent (machine-readable)
+  assert.ok(response.content);
+  assert.ok(Array.isArray(response.content));
+  assert.equal(response.content[0].type, "text");
+  assert.ok(typeof response.content[0].text === "string");
+  assert.ok(response.structuredContent);
+
+  // Structured content: unavailable source with empty timeline
+  assert.equal(response.structuredContent.source, "unavailable");
+  assert.deepEqual(response.structuredContent.timeline, []);
+
+  // Text should mention "no replay data available"
+  assert.match(response.content[0].text, /no replay data available/i);
+
+  // Must NOT be an error response (this is the key difference from delegate_status)
+  assert.equal(response.isError, undefined);
 });
