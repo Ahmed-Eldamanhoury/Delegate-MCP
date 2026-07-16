@@ -1,7 +1,6 @@
 import { createMetricsCollector } from "./metricsCollector.js";
 import { createTimelineStore } from "./timelineStore.js";
 import { createReplayEngine } from "./replayEngine.js";
-import { createEventHistoryStore } from "./eventHistoryStore.js";
 import { createSnapshotBuilder } from "./snapshotBuilder.js";
 import { createConsumerRegistry } from "./consumerRegistry.js";
 
@@ -21,18 +20,17 @@ import { createConsumerRegistry } from "./consumerRegistry.js";
  * Phase 2 (this file, ADR-0003 Migration plan step 2/3): ReplayEngine, SnapshotBuilder,
  * ConsumerRegistry. No Dashboard/REST API/plugin/new-MCP-tool consumes this yet.
  *
- * @param {{bus: import("./runtimeEventBus.js").RuntimeEventBus, config?: import("../config/index.js").DelegateConfig, logger?: object, maxTimelineHistory?: number}} opts
+ * @param {{bus: import("./runtimeEventBus.js").RuntimeEventBus, config?: import("../config/index.js").DelegateConfig, logger?: object, maxTimelineHistory?: number, eventHistoryStore?: import("./eventHistoryStore.js").EventHistoryStore}} opts
  */
-export function createObservabilityService({ bus, config, logger, maxTimelineHistory } = {}) {
+export function createObservabilityService({ bus, config, logger, maxTimelineHistory, eventHistoryStore } = {}) {
   const metrics = createMetricsCollector({ config, logger });
   const timeline = createTimelineStore({ maxTimelineHistory });
-  // ADR-0006: ReplayEngine's durable tier needs its own read-only EventHistoryStore handle,
-  // constructed only when config.eventHistory === "file" -- mirroring exactly how
-  // mcpServer.js's wireEventHistoryIfEnabled gates the write-side bridge on that same
-  // condition. When unset/"memory", eventHistoryStore stays undefined and ReplayEngine's
+  // ADR-0006: ReplayEngine's durable tier uses the EventHistoryStore instance passed in by the
+  // caller (mcpServer.js's createMcpServer constructs it once, shared with the write-side
+  // bridge -- see selectEventHistoryStore there) rather than building its own; this function no
+  // longer constructs an EventHistoryStore at all. When not passed (e.g. an existing test/caller
+  // that doesn't touch this feature), eventHistoryStore stays undefined and ReplayEngine's
   // behavior is byte-identical to before this feature existed.
-  const eventHistoryStore =
-    config?.eventHistory === "file" ? createEventHistoryStore({ dir: config.eventHistoryDir, logger }) : undefined;
   const replayEngine = createReplayEngine({ timelineStore: timeline, eventHistoryStore, config, logger });
   const snapshotBuilder = createSnapshotBuilder({ metricsCollector: metrics });
   const consumers = createConsumerRegistry();

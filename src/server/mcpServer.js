@@ -50,17 +50,36 @@ export function selectJobStore(config, logger) {
 }
 
 /**
- * Constructs an `EventHistoryStore` and wires it into the bus per `config.eventHistory`
- * (ADR-0006), mirroring `selectJobStore`'s shape: extracted as its own exported function so
- * it's unit-testable without constructing a full McpServer. When `config.eventHistory` is
- * unset or `"memory"` this is a no-op -- nothing new runs, default behavior stays byte-identical
- * to before this feature existed.
- * @param {{bus: object, config: import("../config/index.js").DelegateConfig, logger?: {warn: Function}}} deps
- * @returns {(() => void)|undefined} unsubscribe, or undefined when eventHistory is not "file"
+ * Constructs the single, shared `EventHistoryStore` per `config.eventHistory` (ADR-0006),
+ * mirroring `selectJobStore`'s shape: extracted as its own exported function so it's
+ * unit-testable without constructing a full McpServer. This is the ONE construction point for
+ * this stateless store (ponytail-audit finding: it used to be built twice -- once here, once
+ * again inside `createObservabilityService` -- both gated on the identical condition and
+ * pointed at the identical directory). `createMcpServer` calls this once and threads the single
+ * resulting instance into both `wireEventHistoryIfEnabled` (the write-side bridge) and
+ * `createObservabilityService` (ReplayEngine's durable read tier). When `config.eventHistory`
+ * is unset or `"memory"` this returns `undefined` -- default behavior stays byte-identical to
+ * before this feature existed.
+ * @param {import("../config/index.js").DelegateConfig} config
+ * @param {{warn: Function}} [logger]
+ * @returns {ReturnType<typeof createEventHistoryStore>|undefined}
  */
-export function wireEventHistoryIfEnabled({ bus, config, logger }) {
+export function selectEventHistoryStore(config, logger) {
   if (config.eventHistory !== "file") return undefined;
-  const eventHistoryStore = createEventHistoryStore({ dir: config.eventHistoryDir, logger });
+  return createEventHistoryStore({ dir: config.eventHistoryDir, logger });
+}
+
+/**
+ * Wires an already-constructed `EventHistoryStore` into the write-side bus bridge (ADR-0006).
+ * Gating now happens exactly once, in `createMcpServer`, when deciding whether to construct the
+ * store at all (`selectEventHistoryStore`) -- this function no longer checks
+ * `config.eventHistory` or builds its own store; it only uses whatever `eventHistoryStore` it's
+ * given, so passing `undefined` (the default-config case) is a no-op.
+ * @param {{bus: object, eventHistoryStore?: ReturnType<typeof createEventHistoryStore>, config: import("../config/index.js").DelegateConfig}} deps
+ * @returns {(() => void)|undefined} unsubscribe, or undefined when eventHistoryStore is undefined
+ */
+export function wireEventHistoryIfEnabled({ bus, eventHistoryStore, config }) {
+  if (!eventHistoryStore) return undefined;
   return wireEventHistoryToEventBus({ bus, eventHistoryStore, maxFiles: config.maxEventHistoryFiles });
 }
 
@@ -93,11 +112,24 @@ export function createMcpServer({ config, logger, version }) {
   // Task 5: the instance itself IS kept (returned below, alongside `server`) so its close()
   // (unsubscribe from the bus) is reachable during graceful shutdown -- previously constructed
   // here and immediately discarded, so close() was never callable from anywhere.
-  const observabilityService = createObservabilityService({ bus, config, logger, maxTimelineHistory: config.maxJobHistory });
 
-  // ADR-0006: EventHistoryStore is a new, independent bus.subscribeAll() consumer, opt-in via
+  // ADR-0006: EventHistoryStore is stateless and constructed exactly ONCE here, opt-in via
   // config.eventHistory (default "memory" = off, byte-identical to before this feature existed).
-  wireEventHistoryIfEnabled({ bus, config, logger });
+  // The single resulting instance is shared by both ObservabilityService's ReplayEngine durable
+  // tier (below) and the write-side bridge (wireEventHistoryIfEnabled, further below) -- fixing
+  // a ponytail-audit finding where each independently built its own instance over the identical
+  // directory, under the identical gate.
+  const eventHistoryStore = selectEventHistoryStore(config, logger);
+
+  const observabilityService = createObservabilityService({
+    bus,
+    config,
+    logger,
+    maxTimelineHistory: config.maxJobHistory,
+    eventHistoryStore,
+  });
+
+  wireEventHistoryIfEnabled({ bus, eventHistoryStore, config });
 
   server.registerTool(
     "delegate_task",
@@ -185,5 +217,8 @@ export function createMcpServer({ config, logger, version }) {
     createDelegateCancelHandler({ jobManager })
   );
 
-  return { server, observabilityService };
+  // `eventHistoryStore` is exposed alongside `server`/`observabilityService` so it's reachable
+  // for callers/tests that need it (e.g. proving it's the same instance the bridge and the
+  // replay engine both use) -- undefined when config.eventHistory isn't "file", same as today.
+  return { server, observabilityService, eventHistoryStore };
 }

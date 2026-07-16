@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { JobManager } from "../src/services/jobManager.js";
 import { createRuntimeEventBus } from "../src/services/runtimeEventBus.js";
 import { createObservabilityService } from "../src/services/observabilityService.js";
+import { createEventHistoryStore } from "../src/services/eventHistoryStore.js";
 import { persistJobArtifacts } from "../src/services/workspaceManager.js";
 import { toJobView } from "../src/models/job.js";
 import { EVENT_TYPES } from "../src/models/runtimeEvent.js";
@@ -174,6 +175,62 @@ test("replay() sources from runtime while retained, then falls back to workspace
     assert.ok(replayed.timeline.length > 0);
   } finally {
     rmSync(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+// --- Task 7 (ponytail-audit dedup): createObservabilityService must use the eventHistoryStore
+// instance it's handed for ReplayEngine's durable tier, not construct its own from
+// config.eventHistory/config.eventHistoryDir (that construction now happens exactly once, in
+// mcpServer.js's createMcpServer/selectEventHistoryStore, shared with the write-side bridge). ---
+
+test("createObservabilityService's ReplayEngine durable tier uses exactly the passed eventHistoryStore, never one reconstructed from config.eventHistoryDir", () => {
+  const dirWithData = mkdtempSync(join(tmpdir(), "obs-svc-eh-shared-"));
+  const dirConfigPointsAt = mkdtempSync(join(tmpdir(), "obs-svc-eh-unused-"));
+  try {
+    const jobId = "c9b9a6a0-1a2b-4c3d-9e8f-0a1b2c3d4e5f";
+    const passedStore = createEventHistoryStore({ dir: dirWithData });
+    passedStore.append({
+      eventId: "e1",
+      jobId,
+      type: EVENT_TYPES.JOB_QUEUED,
+      timestamp: new Date().toISOString(),
+      payload: {},
+    });
+
+    const bus = createRuntimeEventBus();
+    // config.eventHistoryDir deliberately points at a DIFFERENT, empty directory -- if this
+    // function still built its own store from config (the old, duplicated behavior), replay
+    // would find nothing there and fall through to "unavailable". Finding the data instead
+    // proves it used the exact `eventHistoryStore` object passed in.
+    const observability = createObservabilityService({
+      bus,
+      config: { eventHistory: "file", eventHistoryDir: dirConfigPointsAt },
+      eventHistoryStore: passedStore,
+    });
+
+    const result = observability.replay(jobId);
+    assert.equal(result.source, "durable");
+    assert.equal(result.timeline.length, 1);
+  } finally {
+    rmSync(dirWithData, { recursive: true, force: true });
+    rmSync(dirConfigPointsAt, { recursive: true, force: true });
+  }
+});
+
+test("createObservabilityService's ReplayEngine durable tier is unavailable when eventHistoryStore isn't passed, even if config.eventHistory is 'file' -- construction happens only in mcpServer.js now", () => {
+  const dir = mkdtempSync(join(tmpdir(), "obs-svc-eh-not-passed-"));
+  try {
+    const bus = createRuntimeEventBus();
+    const observability = createObservabilityService({
+      bus,
+      config: { eventHistory: "file", eventHistoryDir: dir },
+      // no eventHistoryStore passed
+    });
+
+    const result = observability.replay("d3f1a2b4-5c6d-4e7f-8a9b-0c1d2e3f4a5b");
+    assert.equal(result.source, "unavailable");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
