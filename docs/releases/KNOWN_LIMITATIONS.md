@@ -60,6 +60,12 @@ document indexes them for a release audience rather than restating the evidence.
   it before falling back to the coarse synthesis. Default behavior unchanged (off unless
   explicitly enabled). See `CHANGELOG.md`'s 2.4.0 entry and
   [ADR-0006](../adr/ADR-0006-persistent-event-history.md).
+- **`ObservabilityService.replay()` had no external consumer — two sprints of Observability work
+  (`ADR-0003`, `ADR-0006`) were entirely unreachable by this server's actual users** (fixed in
+  this sprint): `delegate_replay`, a new MCP tool, is `replay()`'s first external consumer —
+  a thin transport adapter with no replay/filtering/persistence logic of its own. See
+  `CHANGELOG.md`'s 2.5.0 entry and
+  [ADR-0007](../adr/ADR-0007-mcp-replay-access.md).
 
 ## Current scope boundaries
 
@@ -69,8 +75,10 @@ document indexes them for a release audience rather than restating the evidence.
   [ADR-0005](../adr/ADR-0005-persistent-job-store.md)). Still single-process/single-
   machine — no distributed store, no compaction beyond `JobManager`'s own history
   eviction.
-- `ObservabilityService` has no external consumer — no Dashboard, REST API, or MCP tool
-  currently reads from it.
+- One MCP tool, `delegate_replay` ([ADR-0007](../adr/ADR-0007-mcp-replay-access.md)), now reads
+  `ObservabilityService.replay()` specifically. The rest of `ObservabilityService`'s surface
+  (`getMetrics()`/`getSnapshot()`/`getTimeline()`/`ConsumerRegistry`) still has no external
+  consumer — no Dashboard, REST API, or MCP tool currently reads from any of it.
 - Windows-focused process-tree cleanup (`taskkill /t /f`) — the codebase runs cross-platform
   in principle, but this specific cleanup path is Windows-specific by design (POSIX process
   groups aren't used).

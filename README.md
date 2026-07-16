@@ -3,8 +3,8 @@
 An MCP server for Claude Desktop that hands tasks off to a headless Claude Code CLI session
 (`claude -p`), running a cheaper/different model tier. It shells out to the `claude` binary
 already logged into your Claude subscription — no separate Anthropic API key or billing
-required. Six tools: `delegate_task`, `delegate_submit`, `delegate_status`,
-`delegate_history`, `delegate_models`, `delegate_cancel`.
+required. Seven tools: `delegate_task`, `delegate_submit`, `delegate_status`,
+`delegate_history`, `delegate_models`, `delegate_cancel`, `delegate_replay`.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the code layout.
 
@@ -152,6 +152,36 @@ limitation noted in earlier versions of this doc (that `delegate_task` blocks so
 window to cancel it) is resolved by using `delegate_submit` for anything you might want to
 cancel.
 
+## Tool: `delegate_replay`
+
+Read-only. Reconstructs a `delegate_task`/`delegate_submit` job's event history for viewing —
+never re-executes anything.
+
+| Field | Required | Notes |
+|---|---|---|
+| `job_id` | yes | id returned by `delegate_task`'s job or from `delegate_history` |
+
+Returns a human-readable summary plus `{ source, timeline }` as `structuredContent`, where
+`source` is the richest available tier:
+
+- `runtime` — the job's timeline is still live in `TimelineStore` (in-memory), full fidelity.
+- `durable` — the live timeline was already evicted, but a full-fidelity on-disk log was found
+  via `EventHistoryStore` — only possible if `CLAUDE_DELEGATE_EVENT_HISTORY=file` was enabled
+  (see the Configuration table above and [ADR-0006](docs/adr/ADR-0006-persistent-event-history.md)).
+- `workspace` — no live or durable data; a coarse lifecycle summary synthesized from the job's
+  `workspace/jobs/<job-id>/metadata.json` mirror.
+- `unavailable` — no data of any kind could be found for the given `job_id`; `timeline` is
+  empty. Not treated as an error — a normal, informative response.
+
+```json
+{ "source": "runtime", "timeline": [{ "timestamp": "...", "type": "job.started" }] }
+```
+
+Works even with no configuration at all (falls back to the coarse `workspace` tier), and gets
+richer — full fidelity beyond `TimelineStore`'s retention window — once
+`CLAUDE_DELEGATE_EVENT_HISTORY=file` is enabled. See
+[ADR-0007](docs/adr/ADR-0007-mcp-replay-access.md) for the full design rationale.
+
 ## Workspace
 
 Every job (from either `delegate_task` or `delegate_submit`) gets a durable on-disk record at
@@ -218,10 +248,13 @@ Beyond metrics/timeline (Phase 1), `ObservabilityService` also exposes:
 - **`registerConsumer()`/`unregisterConsumer()`/`getConsumerHealth()`/`getConsumerStatistics()`**
   — bookkeeping for future consumers (no transport layer of its own).
 
-None of this is exposed through any MCP tool, Dashboard, or other API yet — that's future work
-per ADR-0003's Extension Rules (Dashboard, REST API, Prometheus/Grafana, future MCP tools all
-consume `ObservabilityService`, never the bus directly, whenever they're built). Frozen public
-contracts: [docs/OBSERVABILITY_FREEZE.md](docs/OBSERVABILITY_FREEZE.md).
+`replay()` now has its first external consumer — the `delegate_replay` MCP tool documented above
+([ADR-0007](docs/adr/ADR-0007-mcp-replay-access.md)). Everything else here (`getSnapshot()`,
+`registerConsumer()`/`unregisterConsumer()`/`getConsumerHealth()`/`getConsumerStatistics()`, and
+metrics/timeline access generally) is still not exposed through any MCP tool, Dashboard, or other
+API — that's future work per ADR-0003's Extension Rules (Dashboard, REST API,
+Prometheus/Grafana, future MCP tools all consume `ObservabilityService`, never the bus directly,
+whenever they're built). Frozen public contracts: [docs/OBSERVABILITY_FREEZE.md](docs/OBSERVABILITY_FREEZE.md).
 
 ## Security note
 

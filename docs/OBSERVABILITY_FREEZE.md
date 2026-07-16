@@ -75,7 +75,10 @@ original object nor a `listConsumers()` result can be mutated to corrupt the reg
   `getMetrics()`'s return — the dispatch mechanism itself never changes (ADR-0003).
 - **New consumers** (Dashboard, REST API, CLI Dashboard, VSCode extension, Prometheus/Grafana,
   future MCP tools): call `ObservabilityService`'s existing methods; never subscribe to
-  `RuntimeEventBus` directly (Dependency Direction, ADR-0003). None are implemented yet.
+  `RuntimeEventBus` directly (Dependency Direction, ADR-0003). `delegate_replay` (ADR-0007) is
+  now implemented and calls `replay()` — the first such consumer. Every other consumer type
+  listed above, and every other `ObservabilityService` method (`getMetrics()`, `getSnapshot()`,
+  `getTimeline()`, `ConsumerRegistry`), still has none.
 - **Durable full-fidelity replay**: built (ADR-0006) — opt-in via `config.eventHistory =
   "file"` (`CLAUDE_DELEGATE_EVENT_HISTORY=file`). `EventHistoryStore` appends every job's events
   to a per-job `<job-id>.jsonl`, and `replay()` gained a `"durable"` tier that reads from it once a

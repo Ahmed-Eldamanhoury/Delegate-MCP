@@ -1,5 +1,35 @@
 # Changelog
 
+## [2.5.0] - 2026-07-16
+
+MCP Replay Access Sprint — implements
+[ADR-0007](docs/adr/ADR-0007-mcp-replay-access.md), a new `delegate_replay` tool that gives any
+MCP client read-only access to `ObservabilityService.replay(jobId)` — the first external
+consumer of the observability foundation built across the `ADR-0003` and `ADR-0006` sprints.
+Two commits (the handler, `createDelegateReplayHandler`, built via TDD as a thin wrapper with no
+replay/filtering/persistence logic of its own; then its registration as the MCP server's 7th
+tool). 281/281 tests passing (271 pre-existing + 10 new this sprint).
+
+### Added
+- **`delegate_replay` MCP tool** (`src/handlers/delegateReplayHandler.js`, registered in
+  `src/server/mcpServer.js`): read-only, takes a `job_id` and returns
+  `{ source, timeline }` — `ObservabilityService.replay()`'s return value passed through
+  verbatim, plus a human-readable `content[0].text` summary. `source` is one of four values:
+  `"runtime"` (live, in-memory, full fidelity), `"durable"` (on-disk full fidelity, only when
+  `CLAUDE_DELEGATE_EVENT_HISTORY=file` is enabled), `"workspace"` (coarse lifecycle summary
+  synthesized from the job's workspace mirror), or `"unavailable"` (no data found — treated as a
+  normal, informative response, not an error). Useful with zero operator configuration (falls
+  back to the coarse `"workspace"` tier), richer once the durable event log is enabled.
+
+### Compatibility
+Zero change to any existing tool's schema — one net-new, additive MCP tool, **minor** per
+`docs/FOUNDATION_FREEZE.md`'s own versioning policy. Zero change to `ObservabilityService`,
+`ReplayEngine`, `TimelineStore`, or `EventHistoryStore` — `delegate_replay` calls
+`ObservabilityService.replay()` exactly as it already existed, no reshaping, no new type. Full
+design detail, the six-principle Platform Transport-Agnosticism Verification, and out-of-scope
+boundaries in [ADR-0007](docs/adr/ADR-0007-mcp-replay-access.md). 281/281 tests passing (271
+pre-existing + 10 new).
+
 ## [2.4.0] - 2026-07-16
 
 Persistent Event History Sprint — implements
