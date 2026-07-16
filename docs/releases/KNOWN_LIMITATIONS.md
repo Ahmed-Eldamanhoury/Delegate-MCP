@@ -11,7 +11,7 @@ document indexes them for a release audience rather than restating the evidence.
    history predating this feature), fine-grained progress ticks aren't persisted to disk, only
    final aggregated state — a documented, accepted tradeoff (ADR-0003). Setting
    `CLAUDE_DELEGATE_EVENT_HISTORY=file` turns on `EventHistoryStore`, which persists every event
-   to a per-job `events.jsonl`; once enabled, `replay()`'s new `"durable"` tier serves
+   to a per-job `<job-id>.jsonl`; once enabled, `replay()`'s new `"durable"` tier serves
    full-fidelity replay for jobs recorded after that point, even after they leave
    `TimelineStore`'s window or the process restarts (see "Resolved since v1.0.0" below and
    [ADR-0006](../adr/ADR-0006-persistent-event-history.md)). The coarse fallback still applies
@@ -55,7 +55,7 @@ document indexes them for a release audience rather than restating the evidence.
   [ADR-0005](../adr/ADR-0005-persistent-job-store.md).
 - **No durable full-fidelity replay existed — `replay()` fell straight to the coarse workspace
   synthesis once a job's timeline left `TimelineStore`'s window** (fixed in this sprint):
-  `EventHistoryStore` now persists every job's events to a per-job `events.jsonl`, opt-in via
+  `EventHistoryStore` now persists every job's events to a per-job `<job-id>.jsonl`, opt-in via
   `CLAUDE_DELEGATE_EVENT_HISTORY=file`, and `replay()` gained a `"durable"` tier that reads from
   it before falling back to the coarse synthesis. Default behavior unchanged (off unless
   explicitly enabled). See `CHANGELOG.md`'s 2.4.0 entry and

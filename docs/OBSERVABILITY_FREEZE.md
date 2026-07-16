@@ -78,7 +78,7 @@ original object nor a `listConsumers()` result can be mutated to corrupt the reg
   `RuntimeEventBus` directly (Dependency Direction, ADR-0003). None are implemented yet.
 - **Durable full-fidelity replay**: built (ADR-0006) — opt-in via `config.eventHistory =
   "file"` (`CLAUDE_DELEGATE_EVENT_HISTORY=file`). `EventHistoryStore` appends every job's events
-  to a per-job `events.jsonl`, and `replay()` gained a `"durable"` tier that reads from it once a
+  to a per-job `<job-id>.jsonl`, and `replay()` gained a `"durable"` tier that reads from it once a
   job's timeline has left `TimelineStore`'s retained window, before falling back to the coarse
   workspace synthesis. Off by default — a deployment that never sets the env var sees
   byte-identical behavior to before this existed. See

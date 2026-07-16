@@ -26,7 +26,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the code layout.
 | `CLAUDE_DELEGATE_JOB_STORE` | `memory` | `memory` or `file`. `file` switches to `FileJobStore`, which survives a process restart — see [ADR-0005](docs/adr/ADR-0005-persistent-job-store.md). |
 | `CLAUDE_DELEGATE_JOB_STORE_DIR` | `<project>/job-store` | directory `FileJobStore` writes one JSON file per job to — only used when `CLAUDE_DELEGATE_JOB_STORE=file` |
 | `CLAUDE_DELEGATE_EVENT_HISTORY` | `memory` | `memory` or `file`. `file` switches on `EventHistoryStore`, an append-only per-job durable event log that gives `ReplayEngine` a full-fidelity `"durable"` fallback tier surviving a process restart — see [ADR-0006](docs/adr/ADR-0006-persistent-event-history.md). |
-| `CLAUDE_DELEGATE_EVENT_HISTORY_DIR` | `<project>/event-history` | directory `EventHistoryStore` writes one `events.jsonl` file per job to — only used when `CLAUDE_DELEGATE_EVENT_HISTORY=file` |
+| `CLAUDE_DELEGATE_EVENT_HISTORY_DIR` | `<project>/event-history` | directory `EventHistoryStore` writes one `<job-id>.jsonl` file per job to — only used when `CLAUDE_DELEGATE_EVENT_HISTORY=file` |
 | `CLAUDE_DELEGATE_MAX_EVENT_HISTORY_FILES` | `100` | oldest-completed job event logs beyond this are deleted, oldest-completed-first (never an in-flight job's) |
 | `DELEGATE_DEBUG` | unset (off) | `true` enables Debug Mode — see below. Anything else is treated as off. |
 

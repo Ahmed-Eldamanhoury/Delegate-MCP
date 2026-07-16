@@ -14,7 +14,7 @@ sprint).
 
 ### Added
 - **`EventHistoryStore`** (`src/services/eventHistoryStore.js`): an append-only, per-job durable
-  event log — one `events.jsonl` file per job under a configurable directory. Appended
+  event log — one `<job-id>.jsonl` file per job under a configurable directory. Appended
   synchronously via `EventHistoryBridge` (`src/services/eventHistoryBridge.js`), a
   `RuntimeEventBus` wildcard subscriber that skips `OUTPUT_CHUNK` events (already durable via
   `stdout.log`/`stderr.log`). Unit-tested in isolation before being wired to anything else.
@@ -28,7 +28,7 @@ sprint).
   (`src/services/replayEngine.js`), sitting between `"runtime"` (`TimelineStore`, full fidelity,
   volatile) and `"workspace"` (coarse, synthesized from `metadata.json`): once a job's timeline
   has left `TimelineStore`'s retained window, `replay()` now checks `EventHistoryStore` first and
-  returns full-fidelity, already-ordered events straight from its `events.jsonl` (source
+  returns full-fidelity, already-ordered events straight from its `<job-id>.jsonl` (source
   priority: `runtime` > `durable` > `workspace` > `unavailable`) — only falling to the coarse
   workspace synthesis when no durable log exists for the job either. `replay()`'s `source` field
   is now one of `"runtime"|"durable"|"workspace"|"unavailable"`.
