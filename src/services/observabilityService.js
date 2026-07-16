@@ -1,6 +1,7 @@
 import { createMetricsCollector } from "./metricsCollector.js";
 import { createTimelineStore } from "./timelineStore.js";
 import { createReplayEngine } from "./replayEngine.js";
+import { createEventHistoryStore } from "./eventHistoryStore.js";
 import { createSnapshotBuilder } from "./snapshotBuilder.js";
 import { createConsumerRegistry } from "./consumerRegistry.js";
 
@@ -25,7 +26,14 @@ import { createConsumerRegistry } from "./consumerRegistry.js";
 export function createObservabilityService({ bus, config, logger, maxTimelineHistory } = {}) {
   const metrics = createMetricsCollector({ config, logger });
   const timeline = createTimelineStore({ maxTimelineHistory });
-  const replayEngine = createReplayEngine({ timelineStore: timeline, config, logger });
+  // ADR-0006: ReplayEngine's durable tier needs its own read-only EventHistoryStore handle,
+  // constructed only when config.eventHistory === "file" -- mirroring exactly how
+  // mcpServer.js's wireEventHistoryIfEnabled gates the write-side bridge on that same
+  // condition. When unset/"memory", eventHistoryStore stays undefined and ReplayEngine's
+  // behavior is byte-identical to before this feature existed.
+  const eventHistoryStore =
+    config?.eventHistory === "file" ? createEventHistoryStore({ dir: config.eventHistoryDir, logger }) : undefined;
+  const replayEngine = createReplayEngine({ timelineStore: timeline, eventHistoryStore, config, logger });
   const snapshotBuilder = createSnapshotBuilder({ metricsCollector: metrics });
   const consumers = createConsumerRegistry();
 

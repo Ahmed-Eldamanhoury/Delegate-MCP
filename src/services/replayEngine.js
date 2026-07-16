@@ -49,21 +49,62 @@ function replayFromWorkspace(jobId, config) {
 }
 
 /**
+ * Projects a raw `RuntimeEvent` (as read back from `EventHistoryStore.readAll()`, which
+ * includes `jobId`/`version`) down to the same `TimelineEntry` shape `TimelineStore.getTimeline()`
+ * already returns — a narrowing projection, not a pass-through, so `jobId`/`version` never leak
+ * into a replay result.
+ * @param {import("../models/runtimeEvent.js").RuntimeEvent} event
+ */
+function projectToTimelineEntry(event) {
+  return { eventId: event.eventId, timestamp: event.timestamp, type: event.type, payload: event.payload };
+}
+
+/**
+ * Reads a job's durable event log and projects it to `TimelineEntry` shape, in append order
+ * (no re-sort — `readAll()` already returns file lines top-to-bottom). `OutputChunk` is
+ * excluded here too, not just at `eventHistoryBridge.js`'s write side (ADR-0006) — this keeps
+ * the exclusion true end-to-end even if a log somehow contained one (e.g. older data written
+ * before that write-side rule existed).
+ * @param {string} jobId
+ * @param {{readAll: (jobId: string) => object[]}} eventHistoryStore
+ */
+function replayFromDurable(jobId, eventHistoryStore) {
+  return eventHistoryStore
+    .readAll(jobId)
+    .filter((event) => event.type !== EVENT_TYPES.OUTPUT_CHUNK)
+    .map(projectToTimelineEntry);
+}
+
+/**
  * Reconstructs a job's event history for viewing — read-only, zero side effects, never
  * re-executes anything (ADR-0003). Deterministic: same stored input always yields the same
- * output, since both sources (TimelineStore's retained buffer, workspace's metadata.json) are
- * read verbatim, never re-derived from anything time-dependent.
+ * output, since all sources (TimelineStore's retained buffer, EventHistoryStore's durable log,
+ * workspace's metadata.json) are read verbatim, never re-derived from anything time-dependent.
  *
- * Source priority: runtime (full fidelity) > workspace (coarse, synthesized) > unavailable.
- * Never duplicates stored data — this only *reads* TimelineStore/disk, holds no copy of its own.
+ * Source priority: runtime (full fidelity, volatile) > durable (full fidelity, survives
+ * restart, minus OutputChunk) > workspace (coarse, synthesized) > unavailable. `durable` is a
+ * fallback for when `runtime` is unavailable, never a replacement for it when both exist
+ * (ADR-0006).
+ * Never duplicates stored data — this only *reads* TimelineStore/EventHistoryStore/disk, holds
+ * no copy of its own.
  *
- * @param {{timelineStore: import("./timelineStore.js").TimelineStore, config?: import("../config/index.js").DelegateConfig, logger?: object}} opts
+ * @param {{timelineStore: import("./timelineStore.js").TimelineStore, eventHistoryStore?: import("./eventHistoryStore.js").EventHistoryStore, config?: import("../config/index.js").DelegateConfig, logger?: object}} opts
  */
-export function createReplayEngine({ timelineStore, config, logger }) {
-  /** @param {string} jobId @returns {{source: "runtime"|"workspace"|"unavailable", timeline: object[]}} */
+export function createReplayEngine({ timelineStore, eventHistoryStore, config, logger }) {
+  /** @param {string} jobId @returns {{source: "runtime"|"durable"|"workspace"|"unavailable", timeline: object[]}} */
   function replay(jobId) {
     if (timelineStore.has(jobId)) {
       return { source: "runtime", timeline: timelineStore.getTimeline(jobId) };
+    }
+
+    if (eventHistoryStore) {
+      try {
+        if (eventHistoryStore.has(jobId)) {
+          return { source: "durable", timeline: replayFromDurable(jobId, eventHistoryStore) };
+        }
+      } catch (err) {
+        logger?.warn?.("replayEngine: durable replay failed", { jobId, message: err.message });
+      }
     }
 
     if (config) {
