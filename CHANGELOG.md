@@ -1,5 +1,41 @@
 # Changelog
 
+## [2.3.0] - 2026-07-16
+
+Persistent Job Store Sprint — implements [ADR-0005](docs/adr/ADR-0005-persistent-job-store.md),
+a file-backed, restart-durable alternative to the in-memory job store, opt-in via config and
+off by default. Eight commits (an explicit `JobStore` interface, the `FileJobStore`
+implementation with its own isolation tests, a cache-pollution-on-error fix found while
+implementing it, wiring behind a config flag with default behavior unchanged, hydration
+hardening against corrupted/torn files and non-terminal jobs, a stale-JSDoc fix found
+while reviewing that hardening, config validation with backward-compatible defaults, and
+real crash/restart end-to-end tests plus a measured benchmark). 212/212 tests passing
+(185 pre-existing + 27 new this sprint).
+
+### Added
+- **`FileJobStore`** (`src/services/fileJobStore.js`): a file-backed implementation of the
+  `JobStore` interface (`src/services/jobStore.js`'s `@typedef`, newly made explicit this
+  sprint) — one JSON file per job under a configurable directory, atomic writes (temp file +
+  `rename()`, never a direct write), and an in-memory cache hydrated once at construction so
+  read performance matches `InMemoryJobStore`. On hydration, any non-terminal job
+  (`queued`/`starting`/`running`) recovered from a prior process is deterministically
+  rewritten to `failed` — there is no live subprocess left to ever complete it — and a
+  corrupted or unrecognized-`storeVersion` file is skipped and logged, never thrown.
+- **`jobStore` / `jobStoreDir` config fields** (`src/config/index.js`), env
+  `CLAUDE_DELEGATE_JOB_STORE` (default `"memory"`, accepts `"memory"`/`"file"`) and
+  `CLAUDE_DELEGATE_JOB_STORE_DIR` (default `<project>/job-store`). `mcpServer.js` constructs
+  `new FileJobStore({dir: config.jobStoreDir})` only when `config.jobStore === "file"`;
+  otherwise `JobManager`'s existing `InMemoryJobStore` default is untouched.
+
+### Compatibility
+Zero MCP schema change. No frozen contract touched (`RuntimeEventBus`, the Job lifecycle
+enum, `ExecutionContext`'s shape, `docs/FOUNDATION_FREEZE.md`/`docs/OBSERVABILITY_FREEZE.md`
+guarantees). Both new config fields default to today's exact behavior — an existing
+deployment that never sets `CLAUDE_DELEGATE_JOB_STORE` keeps using `InMemoryJobStore`,
+byte-identical to before this sprint. Full design detail, amendment log, and out-of-scope
+boundaries in [ADR-0005](docs/adr/ADR-0005-persistent-job-store.md). 212/212 tests passing
+(185 pre-existing + 27 new).
+
 ## [2.2.2] - 2026-07-15
 
 Dogfooding Sprint — implements ADR-0004's recommended stdin-close self-shutdown fix

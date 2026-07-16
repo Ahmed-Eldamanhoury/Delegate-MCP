@@ -42,12 +42,19 @@ document indexes them for a release audience rather than restating the evidence.
   live one** (mechanism implemented 2.2.2): the server now treats its own `stdin` ending
   as a third graceful-shutdown trigger alongside `SIGINT`/`SIGTERM`. See `CHANGELOG.md`'s
   2.2.2 entry and limitation 3 above for what remains unverified.
+- **`JobManager({store})`'s extension point had no shipped persistent implementation**
+  (fixed in this sprint): `FileJobStore` implements the same interface, opt-in via
+  config, default behavior unchanged. See `CHANGELOG.md`'s entry and
+  [ADR-0005](../adr/ADR-0005-persistent-job-store.md).
 
 ## Current scope boundaries
 
 - Single-process, single-machine deployment — no distributed job execution, no clustering.
-- In-memory job store by default (`JobManager({store})` extension point exists but has no
-  shipped persistent implementation).
+- In-memory job store by default; a file-backed alternative (`FileJobStore`) now exists
+  and is opt-in via `CLAUDE_DELEGATE_JOB_STORE=file` (see
+  [ADR-0005](../adr/ADR-0005-persistent-job-store.md)). Still single-process/single-
+  machine — no distributed store, no compaction beyond `JobManager`'s own history
+  eviction.
 - `ObservabilityService` has no external consumer — no Dashboard, REST API, or MCP tool
   currently reads from it.
 - Windows-focused process-tree cleanup (`taskkill /t /f`) — the codebase runs cross-platform

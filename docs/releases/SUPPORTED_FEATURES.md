@@ -22,7 +22,7 @@ See linked docs for the underlying evidence.
 | Grafana Adapter | **Future** | Contract designed, not implemented |
 | Plugin SDK | **Future** | No design exists yet beyond "future consumers depend only on `ObservabilityService`" |
 | Future MCP tools (e.g. `delegate_metrics`) | **Future** | Contract pattern designed (mirrors `delegate_status`'s relationship to `JobManager`), not implemented |
-| Persistent job store (non-in-memory) | **Deferred** | Extension point exists (`JobManager({store})`, 4-method interface), no implementation exists |
+| Persistent job store (non-in-memory) | **Stable, opt-in** | `FileJobStore` implements the `JobStore` interface; default remains in-memory, opt in via `CLAUDE_DELEGATE_JOB_STORE=file`. See [ADR-0005](../adr/ADR-0005-persistent-job-store.md). |
 | Durable full-fidelity replay (`events.jsonl`) | **Deferred** | Documented option in ADR-0003, not built — nothing currently requires it |
 | `ConsumerRegistry` auto-expiry/TTL | **Deferred** | `touch()`/health fields exist to support it later; not built speculatively (see [KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md)) |
 

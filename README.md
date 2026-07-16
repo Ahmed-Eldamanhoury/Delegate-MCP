@@ -23,6 +23,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the code layout.
 | `CLAUDE_DELEGATE_BASE_DIR` | process cwd | default working directory for delegated tasks |
 | `CLAUDE_DELEGATE_WORKSPACE_DIR` | `<project>/workspace` | root for per-job on-disk artifacts — see Workspace below |
 | `CLAUDE_DELEGATE_MAX_WORKSPACE_HISTORY` | `100` | oldest completed job workspaces beyond this are deleted |
+| `CLAUDE_DELEGATE_JOB_STORE` | `memory` | `memory` or `file`. `file` switches to `FileJobStore`, which survives a process restart — see [ADR-0005](docs/adr/ADR-0005-persistent-job-store.md). |
+| `CLAUDE_DELEGATE_JOB_STORE_DIR` | `<project>/job-store` | directory `FileJobStore` writes one JSON file per job to — only used when `CLAUDE_DELEGATE_JOB_STORE=file` |
 | `DELEGATE_DEBUG` | unset (off) | `true` enables Debug Mode — see below. Anything else is treated as off. |
 
 ## Debug Mode (development only)
