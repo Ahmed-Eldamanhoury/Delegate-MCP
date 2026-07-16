@@ -241,8 +241,11 @@ bounded the same way job/workspace history already are.
 
 Beyond metrics/timeline (Phase 1), `ObservabilityService` also exposes:
 - **`replay(jobId)`** — reconstructs a job's event history for viewing (read-only, never
-  re-executes anything): full fidelity while the job's timeline is still in `TimelineStore`,
-  a coarser reconstruction from the workspace mirror once evicted, or `unavailable`.
+  re-executes anything): full fidelity while the job's timeline is still in `TimelineStore`
+  (`source: "runtime"`), full fidelity from a durable on-disk log if
+  `CLAUDE_DELEGATE_EVENT_HISTORY=file` was enabled (`source: "durable"`, see
+  [ADR-0006](docs/adr/ADR-0006-persistent-event-history.md)), a coarser reconstruction from the
+  workspace mirror otherwise (`source: "workspace"`), or `"unavailable"`.
 - **`getSnapshot()`** — an immutable, deep-frozen point-in-time view (`{takenAt, metrics,
   activeJobs}`) for future Dashboard polling.
 - **`registerConsumer()`/`unregisterConsumer()`/`getConsumerHealth()`/`getConsumerStatistics()`**
