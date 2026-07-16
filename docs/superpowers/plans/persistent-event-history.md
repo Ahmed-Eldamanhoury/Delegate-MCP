@@ -287,10 +287,12 @@ Tasks 1-3's durable-writing machinery is unaffected (unused, not broken) by the 
 
 ---
 
-## Task 5: E2E restart test + fix the `close()` wiring gap
+## Task 5: E2E restart test + measured benchmark + fix the `close()` wiring gap
 
 **Objective:** prove the whole system survives a restart with full-fidelity replay (not just
-`EventHistoryStore` in isolation), and fix the discovered, unrelated defect
+`EventHistoryStore` in isolation); produce a real, measured performance comparison — not an
+estimate (added per `ADR-0006`'s Final Pre-Implementation Verification, Q3, mirroring
+`FileJobStore`'s own Task 5 precedent exactly); and fix the discovered, unrelated defect
 (`ARCHITECTURE_REVIEW.md`): `ObservabilityService.close()` is never actually called during
 graceful shutdown.
 
@@ -298,6 +300,11 @@ graceful shutdown.
 - Test: `tests/eventHistoryE2E.test.js` (new) — real `RuntimeEventBus` + `JobManager` +
   `wireEventHistoryToEventBus`, a job runs to completion, a second `EventHistoryStore`/
   `ReplayEngine` pair over the same directory replays it with `source: "durable"`.
+- Create: `scripts/benchmark-event-history-store.js` (not part of `npm test` — a manually-run
+  measurement script, mirroring `scripts/benchmark-job-store.js`'s exact shape: append N events
+  for a job, measure real wall-clock `appendFileSync` cost, print per-event and total timing).
+  Run it, record the actual printed output verbatim in the implementer's report — not rounded or
+  estimated, same discipline `ADR-0005`'s Task 5 required.
 - Modify: `src/server/mcpServer.js` (return/expose the `ObservabilityService` instance, or
   store it so `createMcpServer()`'s caller can reach it)
 - Modify: `src/cli/entry.js` (`registerShutdownHandlers` calls the `ObservabilityService`'s

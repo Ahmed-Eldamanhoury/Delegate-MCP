@@ -4,13 +4,258 @@
 
 **Proposed — pending user sign-off before implementation.** Written per the recommendation
 in `RECOMMENDATION.md` (Observability Architecture Review): extend the existing
-`ObservabilityService`/`ReplayEngine` stack rather than replace it. This ADR includes an
-Architectural Verification section (below) performed before this document was written, per
-an explicit governance gate: confirm this design extends existing architecture, touches no
-previously-approved ADR's frozen guarantees, and introduces no duplicated persistence, event
-model, replay logic, or timeline implementation.
+`ObservabilityService`/`ReplayEngine` stack rather than replace it. Two verification rounds
+performed before this document is put forward for sign-off: an initial Architectural
+Verification (below) performed before the Decision was drafted, and a Final Pre-Implementation
+Verification (below, dated after the Decision/Testing plan were written) answering five
+specific technical questions — ordering, crash recovery, performance, future-consumer fit, and
+long-term stability — with one concrete amendment resulting (a measured, not estimated,
+performance benchmark added to the Testing plan and to the implementation plan's Task 5,
+matching `ADR-0005`'s own discipline).
 
-## Architectural Verification (performed before drafting the Decision below)
+## Final Pre-Implementation Verification (Round 2)
+
+Performed after the Decision, Retention, Testing plan, and Alternatives sections below were
+already written, in response to five specific questions requiring repository evidence.
+
+### Q1 — Event ordering across `TimelineStore`, `ReplayEngine`, `EventHistoryStore`
+
+**Claim: ordering is a structural guarantee, not an algorithm that sorts anything.** No two
+sources are ever merged — `replay()` returns exactly one source's already-ordered list,
+verbatim:
+
+```
+function replay(jobId):
+    if timelineStore.has(jobId):
+        return { source: "runtime", timeline: timelineStore.getTimeline(jobId) }
+    if eventHistoryStore.has(jobId):
+        events = eventHistoryStore.readAll(jobId)        # file lines, top-to-bottom = append order
+        return { source: "durable", timeline: events.map(projectToTimelineEntry) }  # no re-sort
+    if config:
+        timeline = replayFromWorkspace(jobId, config)    # 3 points, pushed in fixed chronological order
+        if timeline.length > 0: return { source: "workspace", timeline }
+    return { source: "unavailable", timeline: [] }
+```
+
+**Why each source is independently correct, by construction:**
+
+- **`runtime` (`TimelineStore`)**: `RuntimeEventBus.publish()` is fully synchronous —
+  `emitter.emit(event.type, event); emitter.emit(WILDCARD, event);` (`runtimeEventBus.js:33-34`),
+  no `await`, no `setImmediate`. `TimelineStore.record()`'s own docstring states the resulting
+  guarantee directly: *"ordering is deterministic by construction: `RuntimeEventBus.publish()`
+  dispatches synchronously and Node is single-threaded, so events land in exactly the order they
+  were published — `record()` never reorders"* (`timelineStore.js:6-8`). `record()` simply
+  `list.push(...)`s (`timelineStore.js:43`) — no sort step exists.
+- **`durable` (`EventHistoryStore`)**: `EventHistoryBridge`'s `append()` call is a WILDCARD
+  subscriber on the *same* bus, invoked from the *same* synchronous `emit()` call as
+  `TimelineStore.record()` — EventEmitter invokes every registered listener for an event
+  synchronously, in registration order, before `publish()` returns. Since JS is single-threaded,
+  no second `publish()` call can begin until the first one (and everything it synchronously
+  triggers) has finished — so consecutive `append()` calls for the same job happen in exactly
+  bus-emission order, for the identical reason `TimelineStore.record()` does. `readAll()` reads
+  the file with one `readFileSync` + `split("\n")` (top-to-bottom, no re-ordering possible for a
+  single-writer, sequentially-appended local file) and performs no sort.
+- **`workspace` (coarse fallback)**: `replayFromWorkspace()` pushes its three synthesized points
+  in fixed source-order (queued → running → terminal, `replayEngine.js:26-47`) directly from
+  `metadata.json`'s own timestamp fields — correct because that literal push order matches the
+  job lifecycle's real order, not because anything is sorted afterward.
+- **Cross-source**: never interleaved. This is the deliberate design choice that eliminates the
+  hard version of this problem — a merge-sort of two independently-timestamped streams is never
+  required because exactly one tier is chosen per call.
+
+**One additional structural guarantee worth stating explicitly**: the `durable` tier can only
+ever be reached for a job that is **already fully terminal or from a prior process**.
+`TimelineStore` never evicts an in-flight job (`timelineStore.js:26`, *"never evict in-flight
+jobs"*), so `timelineStore.has(jobId)` is true for any job still running in the *same* process —
+meaning `durable` is only consulted once a job's event stream can no longer receive new writes
+(either it settled and was later evicted, or the whole process — and therefore `TimelineStore`
+itself — restarted). There is therefore no possibility of reading a durable log while it is
+still being appended to.
+
+### Q2 — Crash recovery (contrasted explicitly with `ADR-0005`)
+
+| | `FileJobStore` (`ADR-0005`) | `EventHistoryStore` (this ADR) |
+|---|---|---|
+| Write primitive | temp-file `writeFileSync` + `renameSync` (whole-record rewrite) | single `appendFileSync` (grow-only, no rewrite) |
+| What a mid-write crash can affect | only the record currently being rewritten | only the single most-recent, in-flight append |
+| What can *never* corrupt | any file not mid-rename at crash time (rename is atomic on POSIX/NTFS) | **every previously-appended line, unconditionally** — there is no code path that ever rewrites a prior line |
+| Recovery needed at startup? | **Yes** — Task 3's deterministic non-terminal→`failed` rewrite, because a "current status" can be observably stale/wrong after a crash | **No** — see below |
+
+**What is guaranteed:** every event for which `append()` returned without throwing is durably
+appended (at minimum to the OS page cache, which survives a killed *process* — as distinct from
+an OS crash/power loss, which is out of scope here exactly as `ADR-0005`'s own testing plan
+scoped "a real, uncontrolled process kill" as a separate, deliberately-scheduled concern rather
+than something to guess at). Every line written before the crash is never touched again by any
+later `append()` call, since appends only ever add to the end of the file.
+
+**What can be lost:** at most one event — the single one being written at the exact instant of
+the crash. Every earlier event for that job is unaffected.
+
+**What can never become corrupted:** any event that was durably appended *before* the crash.
+Because writes are append-only, there is no "current record" for a crash to tear — contrast
+`FileJobStore`, where (absent the atomic rename `ADR-0005` added) a crash mid-`write` could have
+corrupted the *only* copy of a job's entire current state.
+
+**How startup recovery behaves: there is none, by design.** `EventHistoryStore` has no
+construction-time hydration step at all — no `_hydrate()` equivalent, no eager
+`readdirSync`/`readFileSync` pass. This is not an oversight; it follows directly from there
+being nothing to fix: a past event doesn't have a "current status" that can become stale the way
+a job's `status` field can. If the crash left a torn trailing line, the *next* time (if ever)
+`readAll(jobId)` is called for that specific job, the per-line `try/catch` (Decision, above)
+silently skips that one unparseable line, logs it, and returns every event that did parse — no
+eager pass is needed because nothing needs fixing before that read happens, unlike
+`FileJobStore`'s non-terminal-job rewrite, which must happen at construction time specifically
+because an unfixed `status: "running"` would be an observably false, permanently-stuck value if
+some caller queried it before any read-triggered fix could run. `EventHistoryStore` has no
+equivalent "observably wrong until fixed" state to protect against.
+
+### Q3 — Performance (estimates, evidence-anchored, one benchmark task added as a result)
+
+The Persistent Job Store Sprint's own testing plan for `FileJobStore` was **explicit that
+performance must be measured, not estimated** (`docs/superpowers/plans/persistent-job-store.md`
+Task 5: *"a measured (not estimated) performance comparison"*). Answering this question honestly
+means giving reasoned estimates *and* flagging that this ADR's Testing plan is missing the
+equivalent measured-benchmark step `FileJobStore` had — **that gap is fixed below, in this same
+round, as this question's one concrete amendment.**
+
+Real measured data available to reason from — `FileJobStore`'s own benchmark
+(`scripts/benchmark-job-store.js`), independently re-run by the controller during the prior
+sprint's final gate: 200 jobs × (`create` + `update`, the only two disk-touching calls in that
+script — `for (const id of ids) store.create(...); for (const id of ids) store.update(...)`,
+`scripts/benchmark-job-store.js:14-15`) = 400 `writeFileSync`+`renameSync` pairs in 391.51ms ≈
+**~0.98ms per write-and-rename pair** on the actual dev machine this project runs on.
+
+- **Synchronous write cost**: `EventHistoryStore.append()` is one `appendFileSync` call — no
+  `renameSync` step at all, so it should cost *less* than the ~0.98ms/write figure above (one
+  syscall sequence instead of two). This is an estimate, not yet measured for this exact
+  primitive on this machine.
+- **Expected throughput**: per-job disk-write *count* could plausibly exceed `FileJobStore`'s
+  (which writes ~2 times per job: create + one update per transition) — a job with several
+  `JobStateChanged`/`JobProgress` ticks appends once per tick (real captures showed up to ~15
+  `thinking_tokens`-driven progress events for one moderately complex task, `ADR-0002`'s
+  "Observed protocol" section) — but each individual write is cheaper (no rename). Net
+  throughput impact is a genuine open question, not asserted here as a single number.
+- **Startup hydration cost: zero.** `EventHistoryStore` has no construction-time read at all
+  (see Q2) — a real, measurable *advantage* over `FileJobStore`, whose `_hydrate()` pays an
+  O(job count) `readdirSync`+`readFileSync`-per-file cost once at every process start.
+- **Replay complexity**: O(n) in the number of non-`OutputChunk` events for the *one* job being
+  replayed — one `readFileSync` (whole file) + `split("\n")` + one `JSON.parse` per line. This is
+  a cold, rare path (only invoked when `replay()` is called for a specific job), never on the hot
+  path (`getMetrics`/`getTimeline`/normal job execution).
+- **Memory impact (steady-state)**: **zero additional resident memory.** Unlike `TimelineStore`
+  (a bounded in-memory `Map`) or `FileJobStore` (a full in-memory cache of every job), this
+  design holds no cache at all — memory is only touched transiently, during an actual `replay()`
+  call, proportional to that one job's event count.
+- **Disk growth**: unbounded without the Retention section's cap; with `maxEventHistoryFiles`
+  (default 100, matching `maxWorkspaceHistory`), bounded to at most 100 jobs' `.jsonl` files.
+  Rough estimate per typical job (lifecycle events: ~4 fixed + `JobProgress`: up to ~15 observed
+  in a real capture, each line perhaps 100-300 bytes): on the order of a few KB per job, so
+  roughly hundreds of KB total at the retention cap — small relative to `stdout.log`/`stderr.log`,
+  which capture full raw CLI output. **Estimate, not measured.**
+
+**Amendment made as a direct result of this question**: the Testing plan (below) and the
+implementation plan's Task 5 are both updated to require a real, measured benchmark script
+(`scripts/benchmark-event-history-store.js`, mirroring `scripts/benchmark-job-store.js`'s
+existing shape) before this wave can be certified complete — every number above is explicitly
+an estimate pending that measurement, consistent with this project's own "measured, not
+estimated" standard.
+
+### Q4 — Future consumers: Dashboard, REST API, Replay Viewer, Timeline UI, Analytics, Cost Explorer, Session Viewer, Search
+
+Every one of these is a **presentation/transport layer over data two components already durably
+own** — `Workspace` (`ADR-0001`, unchanged) and `ObservabilityService`/`ReplayEngine`
+(`ADR-0003` + this ADR) — via `ObservabilityService`'s existing, frozen method set:
+
+```
+                    ┌─────────────────────────────────────────────────────┐
+                    │              ObservabilityService (frozen API)       │
+                    │  getMetrics() getTimeline() replay() getSnapshot()   │
+                    │  registerConsumer()/listConsumers()/etc.             │
+                    └───────────────────────┬───────────────────────────────┘
+                                             │  every consumer below calls ONLY this API
+        ┌──────────────┬──────────────┬─────┴──────┬──────────────┬───────────────┬────────────┐
+        ▼              ▼              ▼            ▼              ▼               ▼            ▼
+    Dashboard      REST API      Replay Viewer  Timeline UI    Analytics*    Cost Explorer**  Session   Search***
+  getSnapshot()  1:1 endpoint   replay(jobId)  getTimeline()  (future new    (metadata.json/   Viewer    (future new
+  getMetrics()   wrappers over  --gains the    (unchanged;    additive       JobCompleted's    replay()+ read-only
+  (polling)      every method   new "durable"  same signature can also use  costUsd field,     workspace/ index over
+                                tier for free)  it gains)      replay()'s    already durable     metadata.json/  workspace/
+                                                                event data   today via           context.json/  event-history,
+                                                                as raw input) ADR-0001's         stdout.log      same Extension
+                                                                              metadata.json)                    Rules pattern
+```
+
+\* **Analytics** (cross-job trends, e.g. "average cost over 30 days"): the two currently-existing
+durable sources (`workspace/jobs/*/metadata.json`, already storing `cost`/`runtimeMs` per
+`ADR-0001:58`, and — once this ADR ships — `event-history/*.jsonl`) are exactly the raw data
+such a feature would aggregate over. A cross-job aggregation method is a plausible **future**,
+purely additive `ObservabilityService` method (e.g. `getHistoricalMetrics({since, until})`) —
+not built by this ADR, but the durable data it would read already exists once this ADR ships,
+with no redesign required to add that method later.
+
+\*\* **Cost Explorer**: notably, basic historical cost-over-time **does not even require this
+ADR** — `metadata.json` already durably persists `cost` per job today (`ADR-0001:58`). This ADR
+adds event-level granularity (the exact `JobCompleted` event and its full payload) on top of
+what `Workspace` already provides, strengthening rather than being a prerequisite for this
+capability.
+
+\*\*\* **Search**: a future read-only indexer over the same two durable sources — itself just
+another `ObservabilityService`-adjacent, read-only consumer, following the identical Extension
+Rules pattern `ADR-0003` already established for every other named future consumer
+(`ADR-0003:280-294`) — never a redesign, never a second architecture.
+
+**None of the eight require a new backend capability beyond what `ObservabilityService`'s
+existing (or additively-extended) method set already provides** — confirming
+`DASHBOARD_FOUNDATION.md`'s verdict extends cleanly to this fuller list.
+
+### Q5 — Long-term architecture: is another migration ever required?
+
+**For the five listed additions (this ADR, Dashboard, REST API, Plugin consumers, Analytics):
+no contract-level migration is required.** Every one of them is designed as a pure additive
+consumer of interfaces already frozen and explicitly designed for exactly this kind of
+extension:
+
+- `RuntimeEventBus`'s `{publish, subscribe, subscribeAll}` contract (`ADR-0002`) already states
+  *"a future implementation (`MessageChannel`, RxJS, Redis, NATS, RabbitMQ) only has to satisfy
+  this same three-function shape"* — the contract, not the `EventEmitter` internals, is what
+  every consumer (including this ADR's new subscriber) depends on.
+- `JobStore`'s 5-method interface (`ADR-0005`/`FOUNDATION_FREEZE.md`) already anticipates a
+  future backend swap (*"a persistent store swaps in via `new JobManager({store})` without
+  touching `JobManager` itself"*).
+- `ObservabilityService`'s method-based facade (`ADR-0003`) is exactly what insulates every
+  future consumer (Q4's table) from ever needing to know how data is stored underneath it.
+
+**The one honest exception, explicitly out of current scope**: if a future requirement emerged
+for genuinely distributed/multi-process/multi-tenant operation — beyond this project's own
+repeatedly-stated scope boundary (`docs/releases/KNOWN_LIMITATIONS.md`: *"Single-process,
+single-machine deployment — no distributed job execution, no clustering"*) — the *backing
+implementations* behind these contracts (the in-process `EventEmitter`, flat per-job files) would
+need to change to something concurrency-safe across processes (a real message broker, a real
+database). This is a genuine future migration *of implementation*, not of *architecture* — every
+contract above was deliberately designed so that swap would not require touching any consumer
+built against it (Dashboard, REST API, this ADR's own `ReplayEngine` integration, etc.). No
+evidence in this repository suggests that requirement is imminent or currently in scope; noted
+here only for honesty, not as a prediction.
+
+**Conclusion**: the architecture is stable for every capability currently named or reasonably
+foreseeable within this project's stated single-process scope. It is not claimed to be
+"permanently final" in the sense of never changing internals — only that its *consumer-facing
+contracts* do not require another redesign for the five listed additions.
+
+### Amendments made as a direct result of this round
+
+1. **Testing plan** (below) and **implementation plan Task 5**
+   (`docs/superpowers/plans/persistent-event-history.md`) both updated to require a real,
+   measured `scripts/benchmark-event-history-store.js`, mirroring `FileJobStore`'s own
+   measured-benchmark precedent — resulting from Q3.
+
+No other question revealed a change to the Decision, Retention, or Compatibility sections below
+— those stand as originally written.
+
+**ADR-0006 is architecture-complete and implementation may begin**, once this document and the
+amended implementation plan are approved.
+
+## Architectural Verification (Round 1 — performed before drafting the Decision below)
 
 ### Documents re-read together as one architecture
 
@@ -271,6 +516,13 @@ actual "survives a restart" property, proven. `ReplayEngine` gains new tests: a 
 returns `source: "durable"` with full fidelity; a job with neither durable log nor `TimelineStore`
 entry still falls back to `source: "workspace"`, unchanged; `OutputChunk` events are confirmed
 absent from a durable log even when the original job produced them.
+
+**Performance: measured, not estimated** (added per this ADR's Final Pre-Implementation
+Verification, Q3). `scripts/benchmark-event-history-store.js`, mirroring
+`scripts/benchmark-job-store.js`'s exact shape: append N events for a job, measure real
+wall-clock `appendFileSync` cost per call; compare against `FileJobStore`'s own already-measured
+per-write cost as a reference point. The actual printed output goes into the implementation
+report verbatim, not rounded or guessed — same discipline `ADR-0005`'s Task 5 established.
 
 ## Compatibility impact
 
