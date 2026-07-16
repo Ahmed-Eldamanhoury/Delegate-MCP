@@ -70,9 +70,10 @@ workspace mutation, policy enforcement, or plugin execution. These remain `JobMa
 
 ## Deferred capabilities
 
-Persistent job store, durable full-fidelity replay (`events.jsonl`), a scheduled
-`ConsumerRegistry.pruneStale()` sweep wired to a real consumer — see
-[SUPPORTED_FEATURES.md](SUPPORTED_FEATURES.md)'s Deferred row for each.
+Durable full-fidelity replay (`events.jsonl`), a scheduled `ConsumerRegistry.pruneStale()`
+sweep wired to a real consumer — see [SUPPORTED_FEATURES.md](SUPPORTED_FEATURES.md)'s
+Deferred row for each. (Persistent job store is no longer deferred — see "Resolved since
+v1.0.0" above.)
 
 ## Future extensions
 
