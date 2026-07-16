@@ -63,10 +63,12 @@ consumer has one: `replay()` → `delegate_replay` (`ADR-0007`), `getMetrics()` 
 is a strict subset of what `delegate_replay`'s runtime tier already returns, and
 `ConsumerRegistry` is out of scope for the reason above — there is no fourth point tool waiting
 in this family. The next wave that touches `ObservabilityService`'s external surface is a
-unified **Access Layer Architecture** ADR (`ADR-0010`, not yet written) — a REST API Foundation
-design covering framework choice, hosting/lifecycle model, auth model, and versioning policy —
-per `CAPABILITY_ROADMAP_REBASELINE.md`'s "Recommended next sprint" and "Expected roadmap after
-that sprint", not another point tool wrapping a single method.
+unified **Access Layer Architecture** ADR (`ADR-0010`, not yet written) — not a REST-specific
+design, but a common service-boundary ADR defining a stable internal API that MCP tools, a
+future REST API, a future Dashboard, a future Plugin API, and future automation all consume as
+thin transport adapters over the same backend logic, per this project's refined governance
+(superseding the REST-API-first framing in `CAPABILITY_ROADMAP_REBASELINE.md`'s original
+"Recommended next sprint" section). Not another point tool wrapping a single method.
 
 ## Compatibility impact
 
