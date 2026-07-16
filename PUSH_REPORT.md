@@ -1,42 +1,18 @@
-# Push Report — Persistent Job Store Sprint
+# Push Report — Persistent Event History Sprint
 
 ## Pushed commits
 
-`a633189..9693583` on `main` (fast-forward push, no merge commit):
-
-| Commit | Summary |
-|---|---|
-| `b112eba` | Introduce the JobStore interface as an explicit JSDoc type |
-| `d0bddbc` | Implement FileJobStore: file-backed JobStore, unit-tested in isolation |
-| `1f181cc` | Fix FileJobStore.create() polluting its cache on a thrown invalid-id call |
-| `41043ad` | Wire FileJobStore into JobManager behind a config flag, default unchanged |
-| `3163492` | Harden FileJobStore hydration: corrupted files and non-terminal recovery |
-| `7572a2d` | Fix stale FileJobStore class JSDoc after Task 3 hydration hardening |
-| `b6916e2` | Validate jobStore/jobStoreDir, pin backward-compatible defaults |
-| `bd68aee` | Add crash/restart E2E recovery tests and a measured store benchmark |
-| `a9a81e1` | Document FileJobStore: CHANGELOG, README, KNOWN_LIMITATIONS, SUPPORTED_FEATURES |
-| `fd99546` | Fix KNOWN_LIMITATIONS.md contradicting itself on job store status |
-| `1ac99d9` | Fix `_hydrate()` trusting a job file's untrusted content `.id` over its filename |
-| `9693583` | Bump to 2.3.0, matching the Persistent Job Store Sprint's CHANGELOG entry |
-
-Final commit hash: `9693583aae6f01ccaac25cc7cf3cfc456c1dc1f1` — pushed to `origin/main`
-(`a633189..9693583`, fast-forward). No GitHub Release created, per this push's explicit
-instructions.
-
-**Update:** after this report was first written, the Observability Architecture Review
-(commit `541c4dc`) was pushed on top, and — matching this repo's own precedent of tagging
-every version bump (v2.0.0, v2.2.1, v2.2.2) — annotated tag `v2.3.0` was created on `main`'s
-new tip and pushed: `git rev-parse v2.3.0^{commit}` → `541c4dc33bd66456092625674604eebde96b4294`,
-confirmed identical to `main`'s `HEAD` at tag time via `git ls-remote --tags origin`
-(`refs/tags/v2.3.0^{}` → same hash). `v2.3.0` is now treated as frozen.
+`195bce3..0f1228c` on `main` (fast-forward push, no merge commit) — same 9 commits listed in
+`MERGE_REPORT.md`. Final commit hash: `0f1228cbb8424f5decc9209c1a6ed59f5b392c5d`, pushed to
+`origin/main`. Annotated tag `v2.4.0` created on this commit and pushed to `origin/v2.4.0`.
 
 ## Test results
 
-213/213 passing, re-run fresh on `main` immediately after the push:
+278/278 passing, re-run fresh on `main` immediately after the push:
 
 ```
-tests 213
-pass 213
+tests 278
+pass 278
 fail 0
 cancelled 0
 skipped 0
@@ -47,50 +23,52 @@ todo 0
 
 | Workflow | Result | Detail |
 |---|---|---|
-| **CI** (`test`, 4-way matrix: ubuntu/windows × node 20/22.x) | ✅ **Success** | All 4 jobs green in 24-47s each: checkout, setup-node, `npm ci`, `npm test`, post-steps. Run [29481204824](https://github.com/Ahmed-Eldamanhoury/Delegate-MCP/actions/runs/29481204824). |
-| **CodeQL** (`analyze`) | ❌ **Failure** | Not caused by this sprint's code — see below. Run [29481204823](https://github.com/Ahmed-Eldamanhoury/Delegate-MCP/actions/runs/29481204823). |
+| **CI** (`test`, 4-way matrix: ubuntu/windows × node 20/22.x) | ✅ **Success** | All 4 jobs green in 21-66s each: checkout, setup-node, `npm ci`, `npm test`, post-steps. Run [29511693449](https://github.com/Ahmed-Eldamanhoury/Delegate-MCP/actions/runs/29511693449). |
+| **CodeQL** (`analyze`) | ❌ **Failure** | Pre-existing and environmental, not caused by this sprint — see below. Run [29511691939](https://github.com/Ahmed-Eldamanhoury/Delegate-MCP/actions/runs/29511691939). |
 
-**CodeQL failure is pre-existing and environmental, not a code defect.** The job fails
-at the `analyze` step with: *"Code scanning is not enabled for this repository. Please
-enable code scanning in the repository settings."* Checked the last 10 CodeQL runs on
-`main` (`gh run list --workflow CodeQL`) — every single one has failed identically going
-back through the Critical Stability Sprint, the Dogfooding Sprint, and this sprint, with
-no exception. This requires enabling code scanning in the repo's GitHub settings (an
-account-level configuration change) — not a fix available from the codebase side, and
-out of scope for this push. Flagging as a known limitation below rather than acting on
-it, since changing repository security settings wasn't requested.
+**CodeQL failure is the same pre-existing, environmental issue documented in the prior sprint's
+`PUSH_REPORT.md`.** Fails identically at the `analyze` step: *"Code scanning is not enabled for
+this repository. Please enable code scanning in the repository settings."* This requires a
+repository-settings change (GitHub Advanced Security / code scanning enablement), not a code
+fix — unrelated to this sprint, present since before the Persistent Job Store Sprint. Not
+acted on here, since changing repository security settings wasn't requested.
 
 ## Repository status
 
-- `main` is up to date with `origin/main`, working tree clean.
-- Feature branch `worktree-persistent-job-store` merged and deleted; its worktree
-  (`.claude/worktrees/persistent-job-store`) removed and pruned.
-- `package.json` version: `2.3.0`.
-- MCP tool surface unchanged: `npx @modelcontextprotocol/inspector --cli node server.js
-  --method tools/list` returns the same 6 tools as every prior certification pass
-  (`delegate_task`, `delegate_submit`, `delegate_status`, `delegate_history`,
-  `delegate_models`, `delegate_cancel`), zero schema drift.
-- Annotated tag `v2.3.0` created and pushed on `main`'s tip after the architecture review
-  landed (commit `541c4dc`), matching this repo's own tagging precedent (see Update above).
-- No GitHub Release created, per this push's explicit instructions.
+- `main` is up to date with `origin/main` — `git rev-parse main origin/main` both resolve to
+  `0f1228cbb8424f5decc9209c1a6ed59f5b392c5d`, identical.
+- Feature branch `worktree-persistent-event-history` merged and deleted; its worktree
+  (`.claude/worktrees/persistent-event-history`) removed and pruned.
+- `package.json` version: `2.4.0`.
+- Annotated tag `v2.4.0` created and pushed, matching this repo's own precedent of tagging every
+  version bump (`v2.0.0`, `v2.2.1`, `v2.2.2`, `v2.3.0` all exist). Verified on the remote:
+  `git ls-remote --tags origin` shows `refs/tags/v2.4.0^{}` dereferencing to
+  `0f1228cbb8424f5decc9209c1a6ed59f5b392c5d` — the exact commit `main` points to.
+- MCP tool surface unchanged: same 6 tools as every prior certification pass, zero schema drift
+  (independently verified via Inspector against the merged `main`, see `MERGE_REPORT.md`).
+- No GitHub Release created (not requested for this sprint).
 
 ## Remaining known limitations
 
-- **CodeQL is not currently running for this repository** (see above) — a pre-existing
-  gap unrelated to this sprint, present since before the Persistent Job Store Sprint
-  began.
-- **`FileJobStore` is opt-in only** (`CLAUDE_DELEGATE_JOB_STORE=file`); default behavior
-  remains in-memory. No migration path exists from an in-memory-only history to a
-  freshly-enabled file store (not needed — enabling starts persistence from that point
-  forward, doesn't need to backfill history that was never persisted).
-- **`FileJobStore` is single-process/single-machine only** — no distributed store, no
-  compaction beyond `JobManager`'s own history eviction (unchanged scope boundary,
-  documented in `docs/releases/KNOWN_LIMITATIONS.md`).
-- **A whole-repository complexity audit run as part of this sprint's final gate**
-  found that the entire `ObservabilityService` stack (`metricsCollector.js`,
-  `timelineStore.js`, `replayEngine.js`, `snapshotBuilder.js`, `consumerRegistry.js`,
-  ~580 lines) has zero production consumers — flagged separately as a standing
-  architectural question, not resolved by this sprint. Relevant context for any
-  follow-on event/history/replay work.
+- **CodeQL is not currently running for this repository** (see above) — unrelated to this
+  sprint, unresolved since before it began.
+- **`EventHistoryStore` is opt-in only** (`CLAUDE_DELEGATE_EVENT_HISTORY=file`); default replay
+  behavior remains the pre-existing two-tier fallback (`runtime` → `workspace`). No backfill for
+  history predating the feature being enabled — accurate description of what "not yet enabled"
+  already meant, not a gap.
+- **`OutputChunk` events are deliberately excluded** from the durable log (already durably owned
+  by `stdout.log`/`stderr.log`) — full raw output remains available via the workspace layer, not
+  via `replay()`'s durable tier.
+- **Retention (`maxEventHistoryFiles`) only evicts confirmed-terminal jobs' files** — total
+  on-disk file count can transiently exceed the cap while many jobs are in-flight, mirroring
+  `workspaceManager.pruneWorkspaces()`'s own existing, identical behavior.
+- **A whole-repository ponytail-audit run during this sprint's final gate** re-confirmed the
+  prior sprint's finding that the `ObservabilityService` stack still has zero external
+  (MCP-tool/Dashboard) consumers — `ReplayEngine`'s durable tier now has real internal logic,
+  but nothing outside the module calls it yet. Separately, the same audit found three
+  pre-existing, unrelated dead `RuntimeEvent` types (`ArtifactCreated`/`WorkspaceCreated`/
+  `WorkspaceDeleted`, from `ADR-0002`, predating both recent sprints) — flagged as a standing
+  question via a separate task, not resolved by this sprint (touches a different, previously-
+  approved ADR's frozen contract).
 - **Stdin-close self-shutdown (ADR-0004)** remains unverified against a real MCP host
-  (pre-existing limitation from the Dogfooding Sprint, unaffected by this push).
+  (pre-existing limitation, unaffected by this push).
