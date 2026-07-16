@@ -207,3 +207,17 @@ test("a leftover .tmp file from a crash mid-write is ignored during hydration, n
 
   assert.deepEqual(store.list(), []);
 });
+
+test("a non-terminal job file whose content .id mismatches its own filename is recovered under the trusted filename id, and never crashes the constructor", () => {
+  const dir = freshDir();
+  mkdirSync(dir, { recursive: true });
+  const tamperedJob = { ...createJob(ID_B), id: "../../etc/passwd", status: JOB_STATUS.RUNNING };
+  writeFileSync(join(dir, `${ID_A}.json`), JSON.stringify({ storeVersion: 1, job: tamperedJob }));
+
+  const store = new FileJobStore({ dir });
+
+  const recovered = store.get(ID_A);
+  assert.equal(recovered.id, ID_A);
+  assert.equal(recovered.status, JOB_STATUS.FAILED);
+  assert.equal(store.get("../../etc/passwd"), undefined);
+});

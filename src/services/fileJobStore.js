@@ -62,7 +62,13 @@ export class FileJobStore {
         continue;
       }
 
-      let job = raw.job;
+      // The filename-derived id is the trusted identity (already passed isValidJobId
+      // above); raw.job.id is untrusted file content and must never be the value that
+      // reaches _pathFor() -- otherwise a mismatched/malicious id in a non-terminal
+      // job's content would throw uncaught out of the recovery _write() below and
+      // crash the constructor, defeating hydration's "never crash on one bad file"
+      // guarantee.
+      let job = { ...raw.job, id };
       if (!TERMINAL_STATUSES.has(job.status)) {
         job = {
           ...job,
