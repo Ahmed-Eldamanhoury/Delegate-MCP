@@ -28,6 +28,12 @@ export function validateConfig(config) {
   if (!Number.isInteger(config.maxWorkspaceHistory) || config.maxWorkspaceHistory <= 0) {
     problems.push("maxWorkspaceHistory must be a positive integer");
   }
+  if (!["memory", "file"].includes(config.jobStore)) {
+    problems.push('jobStore must be "memory" or "file"');
+  }
+  if (!config.jobStoreDir || typeof config.jobStoreDir !== "string") {
+    problems.push("jobStoreDir must be a non-empty string");
+  }
 
   if (problems.length > 0) {
     throw new ConfigError(`Invalid configuration: ${problems.join("; ")}`);
