@@ -1,5 +1,32 @@
 # Changelog
 
+## [2.7.0] - 2026-07-16
+
+MCP Snapshot Access Sprint — implements
+[ADR-0009](docs/adr/ADR-0009-mcp-snapshot-access.md), a new `delegate_snapshot` tool that gives
+any MCP client read-only access to `ObservabilityService.getSnapshot()` — the third and final
+external consumer of the observability foundation built across the `ADR-0003`/`ADR-0006`
+sprints (after `delegate_replay`/`ADR-0007` and `delegate_metrics`/`ADR-0008`), reusing
+`ADR-0007`'s Platform Transport-Agnosticism Verification by reference rather than re-deriving
+it. 287/287 tests passing (284 pre-existing + 3 new this sprint).
+
+### Added
+- **`delegate_snapshot` MCP tool** (`src/handlers/delegateSnapshotHandler.js`, registered in
+  `src/server/mcpServer.js`): read-only, no input, wraps
+  `ObservabilityService.getSnapshot()` verbatim — returns `{ content: [{ type: "text", text:
+  JSON.stringify(snapshot) }], structuredContent: snapshot }`, the same thin two-line wrapper
+  shape as `delegate_metrics`. `getTimeline()` and `ConsumerRegistry` remain out of scope — see
+  the ADR's "Last tool in this family" section: every `ObservabilityService` read method with a
+  well-shaped MCP consumer now has one.
+
+### Compatibility
+Zero change to any existing tool's schema — one net-new, additive MCP tool, **minor** per
+`docs/FOUNDATION_FREEZE.md`'s own versioning policy. Zero change to `ObservabilityService` or
+`SnapshotBuilder` — `delegate_snapshot` calls `ObservabilityService.getSnapshot()` exactly as it
+already existed, no reshaping, no new type. Full design detail in
+[ADR-0009](docs/adr/ADR-0009-mcp-snapshot-access.md). 287/287 tests passing (284 pre-existing +
+3 new).
+
 ## [2.6.0] - 2026-07-16
 
 MCP Metrics Access Sprint — implements

@@ -63,12 +63,13 @@ original object nor a `listConsumers()` result can be mutated to corrupt the reg
   becomes a second source of truth for job state (`JobManager` remains authoritative per
   `FOUNDATION_FREEZE.md`).
 - Zero MCP schema impact from this document's own contract: `delegate_replay` (ADR-0007) now
-  exposes `ObservabilityService.replay()` specifically, and `delegate_metrics` (ADR-0008) now
-  exposes `ObservabilityService.getMetrics()` specifically, but those tools' own input/output
-  schemas are what `FOUNDATION_FREEZE.md` governs, not this document — this document governs
-  only the internal `ObservabilityService` contract those tools (and any future one) call into.
-  The rest of the surface (`getSnapshot()`/`getTimeline()`/`ConsumerRegistry`) still has no MCP
-  tool exposing it.
+  exposes `ObservabilityService.replay()` specifically, `delegate_metrics` (ADR-0008) now
+  exposes `ObservabilityService.getMetrics()` specifically, and `delegate_snapshot` (ADR-0009)
+  now exposes `ObservabilityService.getSnapshot()` specifically, but those tools' own
+  input/output schemas are what `FOUNDATION_FREEZE.md` governs, not this document — this
+  document governs only the internal `ObservabilityService` contract those tools (and any
+  future one) call into. The rest of the surface (`getTimeline()`/`ConsumerRegistry`) still
+  has no MCP tool exposing it.
 - `TimelineStore`/`MetricsCollector` bookkeeping is bounded (oldest-terminal-first eviction,
   O(1) incremental aggregates) — a compatibility guarantee about *behavior* (never unbounded
   memory growth), not about specific internal data structures.
@@ -81,9 +82,10 @@ original object nor a `listConsumers()` result can be mutated to corrupt the reg
   future MCP tools): call `ObservabilityService`'s existing methods; never subscribe to
   `RuntimeEventBus` directly (Dependency Direction, ADR-0003). `delegate_replay` (ADR-0007) is
   now implemented and calls `replay()` — the first such consumer; `delegate_metrics`
-  (ADR-0008) is now implemented and calls `getMetrics()` — the second. Every other consumer
-  type listed above, and every other `ObservabilityService` method (`getSnapshot()`,
-  `getTimeline()`, `ConsumerRegistry`), still has none.
+  (ADR-0008) is now implemented and calls `getMetrics()` — the second; `delegate_snapshot`
+  (ADR-0009) is now implemented and calls `getSnapshot()` — the third. Every other consumer
+  type listed above, and every other `ObservabilityService` method (`getTimeline()`,
+  `ConsumerRegistry`), still has none.
 - **Durable full-fidelity replay**: built (ADR-0006) — opt-in via `config.eventHistory =
   "file"` (`CLAUDE_DELEGATE_EVENT_HISTORY=file`). `EventHistoryStore` appends every job's events
   to a per-job `<job-id>.jsonl`, and `replay()` gained a `"durable"` tier that reads from it once a

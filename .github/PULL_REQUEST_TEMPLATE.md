@@ -10,7 +10,7 @@
 
 - [ ] `npm test` passes locally
 - [ ] `CHANGELOG.md` updated (for any user-visible change)
-- [ ] If this touches a frozen contract (8 MCP tools' schemas, job lifecycle,
+- [ ] If this touches a frozen contract (9 MCP tools' schemas, job lifecycle,
       `ExecutionContext`, `RuntimeEventBus`, `ObservabilityService`'s public methods) — this PR
       explains why, and references the relevant ADR/freeze doc
 - [ ] No new hardcoded local paths, usernames, or secrets introduced

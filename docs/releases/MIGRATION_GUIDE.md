@@ -28,16 +28,17 @@ No config migration, no data migration, no `claude_desktop_config.json` change i
 Guaranteed by [docs/FOUNDATION_FREEZE.md](../FOUNDATION_FREEZE.md): tool names, input schemas,
 the blocking/non-blocking execution contract, the job lifecycle, and the `ExecutionContext`
 shape are all frozen. `docs/OBSERVABILITY_FREEZE.md` extends the same discipline to
-`ObservabilityService`'s internal contract. Two MCP tools now expose it specifically:
-`delegate_replay` ([ADR-0007](../adr/ADR-0007-mcp-replay-access.md)) exposes `replay()`, and
-`delegate_metrics` ([ADR-0008](../adr/ADR-0008-mcp-metrics-access.md)) exposes `getMetrics()` —
-those tools' own input/output schemas are what `FOUNDATION_FREEZE.md` governs. The rest of
-`ObservabilityService`'s surface (`getSnapshot()`/`getTimeline()`/`ConsumerRegistry`) still
-carries no external compatibility surface, since nothing exposes it.
+`ObservabilityService`'s internal contract. Three MCP tools now expose it specifically:
+`delegate_replay` ([ADR-0007](../adr/ADR-0007-mcp-replay-access.md)) exposes `replay()`,
+`delegate_metrics` ([ADR-0008](../adr/ADR-0008-mcp-metrics-access.md)) exposes `getMetrics()`,
+and `delegate_snapshot` ([ADR-0009](../adr/ADR-0009-mcp-snapshot-access.md)) exposes
+`getSnapshot()` — those tools' own input/output schemas are what `FOUNDATION_FREEZE.md`
+governs. The rest of `ObservabilityService`'s surface (`getTimeline()`/`ConsumerRegistry`)
+still carries no external compatibility surface, since nothing exposes it.
 
 ## Frozen contracts
 
-- [FOUNDATION_FREEZE.md](../FOUNDATION_FREEZE.md) — 8 MCP tools, schemas, execution contract, job lifecycle, `ExecutionContext`.
+- [FOUNDATION_FREEZE.md](../FOUNDATION_FREEZE.md) — 9 MCP tools, schemas, execution contract, job lifecycle, `ExecutionContext`.
 - [ADR-0001](../adr/ADR-0001-workspace-and-artifact-architecture.md) — Workspace layout and security model.
 - [ADR-0002](../adr/ADR-0002-streaming-and-event-architecture.md) — `RuntimeEventBus` contract, event schema, streaming.
 - [ADR-0003](../adr/ADR-0003-observability-architecture.md) / [OBSERVABILITY_FREEZE.md](../OBSERVABILITY_FREEZE.md) — Observability's public method set and data shapes.

@@ -9,7 +9,7 @@ labels: enhancement
 Describe the use case — what can't you do today that you'd like to?
 
 **Proposed solution**
-What you'd like to see. If it touches a frozen contract (the 8 MCP tools' schemas, the job
+What you'd like to see. If it touches a frozen contract (the 9 MCP tools' schemas, the job
 lifecycle, `ExecutionContext`, `RuntimeEventBus`, or `ObservabilityService`'s public methods —
 see [docs/FOUNDATION_FREEZE.md](../../docs/FOUNDATION_FREEZE.md) and
 [docs/OBSERVABILITY_FREEZE.md](../../docs/OBSERVABILITY_FREEZE.md)), say so — those changes

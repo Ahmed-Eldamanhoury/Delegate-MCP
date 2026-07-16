@@ -76,12 +76,13 @@ document indexes them for a release audience rather than restating the evidence.
   [ADR-0005](../adr/ADR-0005-persistent-job-store.md)). Still single-process/single-
   machine — no distributed store, no compaction beyond `JobManager`'s own history
   eviction.
-- Two MCP tools now read from `ObservabilityService`: `delegate_replay`
-  ([ADR-0007](../adr/ADR-0007-mcp-replay-access.md)) reads `replay()` specifically, and
+- Three MCP tools now read from `ObservabilityService`: `delegate_replay`
+  ([ADR-0007](../adr/ADR-0007-mcp-replay-access.md)) reads `replay()` specifically,
   `delegate_metrics` ([ADR-0008](../adr/ADR-0008-mcp-metrics-access.md)) reads `getMetrics()`
-  specifically. The rest of `ObservabilityService`'s surface
-  (`getSnapshot()`/`getTimeline()`/`ConsumerRegistry`) still has no external consumer — no
-  Dashboard, REST API, or MCP tool currently reads from any of it.
+  specifically, and `delegate_snapshot` ([ADR-0009](../adr/ADR-0009-mcp-snapshot-access.md))
+  reads `getSnapshot()` specifically. The rest of `ObservabilityService`'s surface
+  (`getTimeline()`/`ConsumerRegistry`) still has no external consumer — no Dashboard, REST
+  API, or MCP tool currently reads from any of it.
 - Windows-focused process-tree cleanup (`taskkill /t /f`) — the codebase runs cross-platform
   in principle, but this specific cleanup path is Windows-specific by design (POSIX process
   groups aren't used).

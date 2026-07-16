@@ -1,12 +1,12 @@
 # Architecture
 
-Eight MCP tools split by concern so each piece is independently testable.
+Nine MCP tools split by concern so each piece is independently testable.
 
 ```
 server.js               backward-compat entrypoint (claude_desktop_config.json points here)
 src/
   cli/entry.js           boot sequence: load config, validate, health check, start server, graceful shutdown
-  server/mcpServer.js     builds the McpServer instance, owns the shared JobManager, registers all 8 tools
+  server/mcpServer.js     builds the McpServer instance, owns the shared JobManager, registers all 9 tools
   server/health.js        non-blocking check that the configured claude binary exists
   handlers/                one file per tool: MCP-shaped request/response formatting
   services/delegationService.js  shared submit path: builds an ExecutionContext, calls jobManager.submit(),
@@ -248,10 +248,11 @@ execution.
   ([ADR-0007](adr/ADR-0007-mcp-replay-access.md)), a thin transport adapter with no
   replay/filtering/persistence logic of its own. `getMetrics()` now has its own external
   consumer too: the `delegate_metrics` MCP tool ([ADR-0008](adr/ADR-0008-mcp-metrics-access.md)),
-  an equally thin wrapper. Every other method (`getSnapshot()`/`getTimeline()`/
-  `ConsumerRegistry`) is still not exposed via any MCP tool — Dashboard/REST API/plugin/
-  future-MCP-tool consumption of those remains future work. Frozen public contracts:
-  [OBSERVABILITY_FREEZE.md](OBSERVABILITY_FREEZE.md).
+  an equally thin wrapper. `getSnapshot()` now has its own external consumer too: the
+  `delegate_snapshot` MCP tool ([ADR-0009](adr/ADR-0009-mcp-snapshot-access.md)), an equally
+  thin wrapper. Every other method (`getTimeline()`/`ConsumerRegistry`) is still not exposed
+  via any MCP tool — Dashboard/REST API/plugin/future-MCP-tool consumption of those remains
+  future work. Frozen public contracts: [OBSERVABILITY_FREEZE.md](OBSERVABILITY_FREEZE.md).
 
 ## Workspace (persistence layer)
 

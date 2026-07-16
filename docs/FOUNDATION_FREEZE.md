@@ -6,10 +6,11 @@ freely as long as everything below stays true.
 
 ## Frozen public APIs (MCP tools)
 
-Eight tools, names and input schemas fixed: `delegate_task`, `delegate_submit`,
+Nine tools, names and input schemas fixed: `delegate_task`, `delegate_submit`,
 `delegate_status`, `delegate_history`, `delegate_models`, `delegate_cancel`, `delegate_replay`
-(added in `ADR-0007`), `delegate_metrics` (added in `ADR-0008`) — each a **minor**, additive
-change per this document's own versioning policy below, not a break of anything above. Field
+(added in `ADR-0007`), `delegate_metrics` (added in `ADR-0008`), `delegate_snapshot` (added in
+`ADR-0009`) — each a **minor**, additive change per this document's own versioning policy
+below, not a break of anything above. Field
 names, types, defaults, and enum values in
 `src/models/schemas.js`'s `DelegateTaskInputShape` are frozen. Tool *descriptions* (prose shown
 via `tools/list`) may be corrected for accuracy without being a breaking change.

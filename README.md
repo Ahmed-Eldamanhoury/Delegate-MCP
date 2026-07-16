@@ -3,9 +3,9 @@
 An MCP server for Claude Desktop that hands tasks off to a headless Claude Code CLI session
 (`claude -p`), running a cheaper/different model tier. It shells out to the `claude` binary
 already logged into your Claude subscription — no separate Anthropic API key or billing
-required. Eight tools: `delegate_task`, `delegate_submit`, `delegate_status`,
+required. Nine tools: `delegate_task`, `delegate_submit`, `delegate_status`,
 `delegate_history`, `delegate_models`, `delegate_cancel`, `delegate_replay`,
-`delegate_metrics`.
+`delegate_metrics`, `delegate_snapshot`.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the code layout.
 
@@ -215,6 +215,46 @@ sample exists); `workspaceSizeBytes`/`artifactCount` are `number|null` (null onl
 [docs/OBSERVABILITY_FREEZE.md](docs/OBSERVABILITY_FREEZE.md) for the full frozen shape and
 [ADR-0008](docs/adr/ADR-0008-mcp-metrics-access.md) for the design rationale.
 
+## Tool: `delegate_snapshot`
+
+Read-only, no input. Returns `ObservabilityService.getSnapshot()`'s current value
+verbatim — never re-executes anything.
+
+Returns a human-readable summary plus the `Snapshot` object as `structuredContent`:
+
+```json
+{
+  "takenAt": "2026-07-16T20:39:36.000Z",
+  "metrics": {
+    "queuedJobs": 0,
+    "runningJobs": 1,
+    "completedJobs": 3,
+    "failedJobs": 0,
+    "cancelledJobs": 0,
+    "averageRuntimeMs": 4210,
+    "maximumRuntimeMs": 5091,
+    "averageQueueWaitMs": 12,
+    "progressRate": 0.6,
+    "streamingEvents": 45,
+    "outputChunks": 12,
+    "eventCount": 60,
+    "workspaceSizeBytes": 20480,
+    "artifactCount": 0
+  },
+  "activeJobs": [
+    { "jobId": "...", "status": "running", "queuedAt": "...", "startedAt": "..." }
+  ]
+}
+```
+
+`metrics` is the same `Metrics` object `delegate_metrics` returns; `activeJobs` lists only
+non-terminal jobs (`status` ∈ `"queued"|"starting"|"running"` — terminal jobs never appear),
+sourced from `MetricsCollector.getActiveJobs()`. The whole object is deep-frozen
+(`structuredClone()` + recursive `Object.freeze()`) — safe to hand to any consumer, mutating
+it throws rather than silently no-opping. See
+[docs/OBSERVABILITY_FREEZE.md](docs/OBSERVABILITY_FREEZE.md) for the full frozen shape and
+[ADR-0009](docs/adr/ADR-0009-mcp-snapshot-access.md) for the design rationale.
+
 ## Workspace
 
 Every job (from either `delegate_task` or `delegate_submit`) gets a durable on-disk record at
@@ -280,17 +320,20 @@ Beyond metrics/timeline (Phase 1), `ObservabilityService` also exposes:
   [ADR-0006](docs/adr/ADR-0006-persistent-event-history.md)), a coarser reconstruction from the
   workspace mirror otherwise (`source: "workspace"`), or `"unavailable"`.
 - **`getSnapshot()`** — an immutable, deep-frozen point-in-time view (`{takenAt, metrics,
-  activeJobs}`) for future Dashboard polling.
+  activeJobs}`), useful for polling (a future Dashboard, or the `delegate_snapshot` MCP tool
+  documented above).
 - **`registerConsumer()`/`unregisterConsumer()`/`getConsumerHealth()`/`getConsumerStatistics()`**
   — bookkeeping for future consumers (no transport layer of its own).
 
 `replay()` now has its first external consumer — the `delegate_replay` MCP tool documented above
 ([ADR-0007](docs/adr/ADR-0007-mcp-replay-access.md)). `getMetrics()` now has its own external
 consumer too — the `delegate_metrics` MCP tool documented above
-([ADR-0008](docs/adr/ADR-0008-mcp-metrics-access.md)). Everything else here (`getSnapshot()`,
-`registerConsumer()`/`unregisterConsumer()`/`getConsumerHealth()`/`getConsumerStatistics()`, and
-timeline access generally) is still not exposed through any MCP tool, Dashboard, or other
-API — that's future work per ADR-0003's Extension Rules (Dashboard, REST API,
+([ADR-0008](docs/adr/ADR-0008-mcp-metrics-access.md)). `getSnapshot()` now has its own external
+consumer too — the `delegate_snapshot` MCP tool documented above
+([ADR-0009](docs/adr/ADR-0009-mcp-snapshot-access.md)). Everything else here
+(`registerConsumer()`/`unregisterConsumer()`/`getConsumerHealth()`/`getConsumerStatistics()`,
+`getTimeline()`, and `ConsumerRegistry` generally) is still not exposed through any MCP tool,
+Dashboard, or other API — that's future work per ADR-0003's Extension Rules (Dashboard, REST API,
 Prometheus/Grafana, future MCP tools all consume `ObservabilityService`, never the bus directly,
 whenever they're built). Frozen public contracts: [docs/OBSERVABILITY_FREEZE.md](docs/OBSERVABILITY_FREEZE.md).
 
