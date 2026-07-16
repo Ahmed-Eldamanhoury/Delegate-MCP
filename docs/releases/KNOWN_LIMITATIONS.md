@@ -7,8 +7,15 @@ document indexes them for a release audience rather than restating the evidence.
 ## Verified limitations (none block this release)
 
 1. **Replay fidelity degrades to "coarse" once a job's timeline leaves `TimelineStore`'s
-   retained window** — fine-grained progress ticks aren't persisted to disk, only final
-   aggregated state. Documented, accepted tradeoff (ADR-0003).
+   retained window — unless the opt-in durable event log is enabled.** By default (and for any
+   history predating this feature), fine-grained progress ticks aren't persisted to disk, only
+   final aggregated state — a documented, accepted tradeoff (ADR-0003). Setting
+   `CLAUDE_DELEGATE_EVENT_HISTORY=file` turns on `EventHistoryStore`, which persists every event
+   to a per-job `events.jsonl`; once enabled, `replay()`'s new `"durable"` tier serves
+   full-fidelity replay for jobs recorded after that point, even after they leave
+   `TimelineStore`'s window or the process restarts (see "Resolved since v1.0.0" below and
+   [ADR-0006](../adr/ADR-0006-persistent-event-history.md)). The coarse fallback still applies
+   whenever the feature is off, or for any job whose events were never captured by it.
 2. **Streaming's real-world verification is limited to 2 CLI captures** plus one live
    end-to-end run. Unobserved response shapes (`tool_use`/`tool_result`, multi-turn) are
    silently skipped rather than guessed at — graceful degradation, not a crash risk, but
@@ -43,9 +50,16 @@ document indexes them for a release audience rather than restating the evidence.
   as a third graceful-shutdown trigger alongside `SIGINT`/`SIGTERM`. See `CHANGELOG.md`'s
   2.2.2 entry and limitation 3 above for what remains unverified.
 - **`JobManager({store})`'s extension point had no shipped persistent implementation**
-  (fixed in this sprint): `FileJobStore` implements the same interface, opt-in via
-  config, default behavior unchanged. See `CHANGELOG.md`'s entry and
+  (fixed in the Persistent Job Store Sprint): `FileJobStore` implements the same interface,
+  opt-in via config, default behavior unchanged. See `CHANGELOG.md`'s 2.3.0 entry and
   [ADR-0005](../adr/ADR-0005-persistent-job-store.md).
+- **No durable full-fidelity replay existed — `replay()` fell straight to the coarse workspace
+  synthesis once a job's timeline left `TimelineStore`'s window** (fixed in this sprint):
+  `EventHistoryStore` now persists every job's events to a per-job `events.jsonl`, opt-in via
+  `CLAUDE_DELEGATE_EVENT_HISTORY=file`, and `replay()` gained a `"durable"` tier that reads from
+  it before falling back to the coarse synthesis. Default behavior unchanged (off unless
+  explicitly enabled). See `CHANGELOG.md`'s 2.4.0 entry and
+  [ADR-0006](../adr/ADR-0006-persistent-event-history.md).
 
 ## Current scope boundaries
 
@@ -70,10 +84,9 @@ workspace mutation, policy enforcement, or plugin execution. These remain `JobMa
 
 ## Deferred capabilities
 
-Durable full-fidelity replay (`events.jsonl`), a scheduled `ConsumerRegistry.pruneStale()`
-sweep wired to a real consumer — see [SUPPORTED_FEATURES.md](SUPPORTED_FEATURES.md)'s
-Deferred row for each. (Persistent job store is no longer deferred — see "Resolved since
-v1.0.0" above.)
+A scheduled `ConsumerRegistry.pruneStale()` sweep wired to a real consumer — see
+[SUPPORTED_FEATURES.md](SUPPORTED_FEATURES.md)'s Deferred row. (Persistent job store and
+durable full-fidelity replay are no longer deferred — see "Resolved since v1.0.0" above.)
 
 ## Future extensions
 

@@ -1,5 +1,60 @@
 # Changelog
 
+## [2.4.0] - 2026-07-16
+
+Persistent Event History Sprint — implements
+[ADR-0006](docs/adr/ADR-0006-persistent-event-history.md), an opt-in, append-only durable event
+log (`EventHistoryStore`) that gives `ReplayEngine` a full-fidelity fallback tier surviving a
+process restart, off by default. Six commits (an isolation-tested `EventHistoryStore`, wiring it
+behind a config flag with default behavior unchanged, a file-count retention cap mirroring
+`FileJobStore`'s pattern, a new `"durable"` tier added to `ReplayEngine`'s fallback chain, a real
+E2E restart proof plus a measured benchmark, and a fix for `ObservabilityService.close()` never
+being reachable from graceful shutdown). 271/271 tests passing (212 pre-existing + 59 new this
+sprint).
+
+### Added
+- **`EventHistoryStore`** (`src/services/eventHistoryStore.js`): an append-only, per-job durable
+  event log — one `events.jsonl` file per job under a configurable directory. Appended
+  synchronously via `EventHistoryBridge` (`src/services/eventHistoryBridge.js`), a
+  `RuntimeEventBus` wildcard subscriber that skips `OUTPUT_CHUNK` events (already durable via
+  `stdout.log`/`stderr.log`). Unit-tested in isolation before being wired to anything else.
+- **`eventHistory` / `eventHistoryDir` / `maxEventHistoryFiles` config fields**
+  (`src/config/index.js`), env `CLAUDE_DELEGATE_EVENT_HISTORY` (default `"memory"`, accepts
+  `"memory"`/`"file"`), `CLAUDE_DELEGATE_EVENT_HISTORY_DIR` (default `<project>/event-history`),
+  and `CLAUDE_DELEGATE_MAX_EVENT_HISTORY_FILES` (default `100`) — oldest-completed job event logs
+  beyond the cap are evicted first, never an in-flight job's, mirroring `pruneWorkspaces()`'s
+  existing eviction pattern.
+- **A new `"durable"` tier in `ReplayEngine.replay(jobId)`'s fallback chain**
+  (`src/services/replayEngine.js`), sitting between `"runtime"` (`TimelineStore`, full fidelity,
+  volatile) and `"workspace"` (coarse, synthesized from `metadata.json`): once a job's timeline
+  has left `TimelineStore`'s retained window, `replay()` now checks `EventHistoryStore` first and
+  returns full-fidelity, already-ordered events straight from its `events.jsonl` (source
+  priority: `runtime` > `durable` > `workspace` > `unavailable`) — only falling to the coarse
+  workspace synthesis when no durable log exists for the job either. `replay()`'s `source` field
+  is now one of `"runtime"|"durable"|"workspace"|"unavailable"`.
+
+### Fixed
+- **`ObservabilityService.close()` was never reachable from anywhere.** `createMcpServer()`
+  constructed the service and immediately discarded the return value, so `close()` (which
+  unsubscribes it from `RuntimeEventBus`) was dead code — the service was never actually
+  unsubscribed during shutdown. `createMcpServer()` now returns `{server, observabilityService}`
+  instead of the bare server (its one caller, `src/cli/entry.js`, is updated accordingly; no test
+  called it directly, so this is a safe shape change), and `registerShutdownHandlers()` calls
+  `observabilityService?.close?.()` alongside `server.close()` in the shutdown path.
+
+### Compatibility
+Zero MCP schema change. Zero `ObservabilityService.replay()` signature change — the new
+`"durable"` value is an addition to the existing `source` union with no change to `replay()`'s
+call signature or to the other three values' meaning, which `docs/OBSERVABILITY_FREEZE.md`'s own
+versioning policy (see its "Versioning policy" section) treats as the same class of change as
+adding a new field with a safe default: additive, non-breaking, at most a minor version bump —
+not the major-version, ADR-amendment-required class of change reserved for anything that breaks
+an existing guarantee. Both new config fields default to today's exact behavior — an existing
+deployment that never sets `CLAUDE_DELEGATE_EVENT_HISTORY` keeps `EventHistoryStore` off
+entirely, byte-identical to before this sprint. Full design detail, amendment log, and
+out-of-scope boundaries in [ADR-0006](docs/adr/ADR-0006-persistent-event-history.md). 271/271
+tests passing (212 pre-existing + 59 new).
+
 ## [2.3.0] - 2026-07-16
 
 Persistent Job Store Sprint — implements [ADR-0005](docs/adr/ADR-0005-persistent-job-store.md),

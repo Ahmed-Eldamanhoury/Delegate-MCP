@@ -15,7 +15,7 @@ maxTimelineHistory })`. Its method set is frozen:
 |---|---|
 | `getMetrics()` | `Metrics` (see below) |
 | `getTimeline(jobId, {type?, since?})` | `TimelineEntry[]`, chronological |
-| `replay(jobId)` | `{source: "runtime"\|"workspace"\|"unavailable", timeline: TimelineEntry[]}` |
+| `replay(jobId)` | `{source: "runtime"\|"durable"\|"workspace"\|"unavailable", timeline: TimelineEntry[]}` |
 | `getSnapshot()` | immutable `Snapshot` (see below) |
 | `registerConsumer(name, metadata?)` | `{id, unregister(), touch()}` |
 | `unregisterConsumer(id)` | `boolean` |
@@ -76,9 +76,13 @@ original object nor a `listConsumers()` result can be mutated to corrupt the reg
 - **New consumers** (Dashboard, REST API, CLI Dashboard, VSCode extension, Prometheus/Grafana,
   future MCP tools): call `ObservabilityService`'s existing methods; never subscribe to
   `RuntimeEventBus` directly (Dependency Direction, ADR-0003). None are implemented yet.
-- **Durable full-fidelity replay**: if a future need arises, a per-job `events.jsonl` append
-  log is the documented option (ADR-0003) — not built, since nothing currently requires it and
-  it would duplicate `TimelineStore`'s data while a job's timeline is still retained.
+- **Durable full-fidelity replay**: built (ADR-0006) — opt-in via `config.eventHistory =
+  "file"` (`CLAUDE_DELEGATE_EVENT_HISTORY=file`). `EventHistoryStore` appends every job's events
+  to a per-job `events.jsonl`, and `replay()` gained a `"durable"` tier that reads from it once a
+  job's timeline has left `TimelineStore`'s retained window, before falling back to the coarse
+  workspace synthesis. Off by default — a deployment that never sets the env var sees
+  byte-identical behavior to before this existed. See
+  [ADR-0006](adr/ADR-0006-persistent-event-history.md).
 - **Consumer TTL/auto-expiry**: `ConsumerRegistry` currently relies on callers calling
   `unregister()`; `touch()`/`getHealth().lastSeenAt` exist so a future consumer of the registry
   could implement staleness detection itself. A `pruneStale(maxAgeMs)` primitive was added in
