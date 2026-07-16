@@ -10,11 +10,12 @@ See linked docs for the underlying evidence.
 | `delegate_status` / `delegate_history` / `delegate_cancel` | **Stable** | Frozen contracts, fully tested |
 | `delegate_models` | **Stable** | Pure config introspection, no execution path |
 | `delegate_replay` | **Stable** | Thin MCP wrapper over `ObservabilityService.replay()`, tested; see [ADR-0007](../adr/ADR-0007-mcp-replay-access.md) |
+| `delegate_metrics` | **Stable** | Thin MCP wrapper over `ObservabilityService.getMetrics()`, tested; see [ADR-0008](../adr/ADR-0008-mcp-metrics-access.md) |
 | Job lifecycle & `JobManager` (queueing, concurrency, cancellation) | **Stable** | Frozen ([FOUNDATION_FREEZE.md](../FOUNDATION_FREEZE.md)), extensively tested including concurrency |
 | Workspace persistence (`metadata.json`/`context.json`/logs/`result.json`) | **Stable** | Frozen ([ADR-0001](../adr/ADR-0001-workspace-and-artifact-architecture.md)), redaction and pruning tested |
 | `RuntimeEventBus` | **Stable** | Frozen contract ([ADR-0002](../adr/ADR-0002-streaming-and-event-architecture.md)), fail-safe subscriber isolation tested |
 | Streaming (`stream-json` progress) | **Stable**, real-world verification limited | Frozen response contract; real-CLI verification is 2 captures + 1 live 17-push end-to-end run (ADR-0002's "Observed protocol" section). Unobserved shapes (`tool_use`/`tool_result`, multi-turn) are silently skipped, never guessed at — not a defect, but broader live coverage is unverified |
-| `ObservabilityService` (metrics/timeline/replay/snapshot/consumer registry) | **Stable** | Frozen contract ([OBSERVABILITY_FREEZE.md](../OBSERVABILITY_FREEZE.md)), fully unit/integration tested. One MCP tool (`delegate_replay`, [ADR-0007](../adr/ADR-0007-mcp-replay-access.md)) now exposes `replay()` specifically — the rest of the surface (`getMetrics()`/`getSnapshot()`/`getTimeline()`/`ConsumerRegistry`) still has zero external consumers and zero external exposure |
+| `ObservabilityService` (metrics/timeline/replay/snapshot/consumer registry) | **Stable** | Frozen contract ([OBSERVABILITY_FREEZE.md](../OBSERVABILITY_FREEZE.md)), fully unit/integration tested. Two MCP tools now expose it: `delegate_replay` ([ADR-0007](../adr/ADR-0007-mcp-replay-access.md)) exposes `replay()`, `delegate_metrics` ([ADR-0008](../adr/ADR-0008-mcp-metrics-access.md)) exposes `getMetrics()` — the rest of the surface (`getSnapshot()`/`getTimeline()`/`ConsumerRegistry`) still has zero external consumers and zero external exposure |
 | Web Dashboard | **Future** | Contract designed (ADR-0003 Extension Rules), not implemented |
 | REST API | **Future** | Contract designed, not implemented — framework choice deliberately deferred |
 | CLI Dashboard | **Future** | Contract designed, not implemented |

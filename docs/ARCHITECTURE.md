@@ -246,10 +246,12 @@ execution.
   bookkeeping with no transport layer of its own.
 - `replay()` now has its first external consumer: the `delegate_replay` MCP tool
   ([ADR-0007](adr/ADR-0007-mcp-replay-access.md)), a thin transport adapter with no
-  replay/filtering/persistence logic of its own. Every other method
-  (`getMetrics()`/`getSnapshot()`/`getTimeline()`/`ConsumerRegistry`) is still not exposed via
-  any MCP tool — Dashboard/REST API/plugin/future-MCP-tool consumption of those remains future
-  work. Frozen public contracts: [OBSERVABILITY_FREEZE.md](OBSERVABILITY_FREEZE.md).
+  replay/filtering/persistence logic of its own. `getMetrics()` now has its own external
+  consumer too: the `delegate_metrics` MCP tool ([ADR-0008](adr/ADR-0008-mcp-metrics-access.md)),
+  an equally thin wrapper. Every other method (`getSnapshot()`/`getTimeline()`/
+  `ConsumerRegistry`) is still not exposed via any MCP tool — Dashboard/REST API/plugin/
+  future-MCP-tool consumption of those remains future work. Frozen public contracts:
+  [OBSERVABILITY_FREEZE.md](OBSERVABILITY_FREEZE.md).
 
 ## Workspace (persistence layer)
 

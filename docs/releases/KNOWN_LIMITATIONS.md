@@ -76,10 +76,12 @@ document indexes them for a release audience rather than restating the evidence.
   [ADR-0005](../adr/ADR-0005-persistent-job-store.md)). Still single-process/single-
   machine — no distributed store, no compaction beyond `JobManager`'s own history
   eviction.
-- One MCP tool, `delegate_replay` ([ADR-0007](../adr/ADR-0007-mcp-replay-access.md)), now reads
-  `ObservabilityService.replay()` specifically. The rest of `ObservabilityService`'s surface
-  (`getMetrics()`/`getSnapshot()`/`getTimeline()`/`ConsumerRegistry`) still has no external
-  consumer — no Dashboard, REST API, or MCP tool currently reads from any of it.
+- Two MCP tools now read from `ObservabilityService`: `delegate_replay`
+  ([ADR-0007](../adr/ADR-0007-mcp-replay-access.md)) reads `replay()` specifically, and
+  `delegate_metrics` ([ADR-0008](../adr/ADR-0008-mcp-metrics-access.md)) reads `getMetrics()`
+  specifically. The rest of `ObservabilityService`'s surface
+  (`getSnapshot()`/`getTimeline()`/`ConsumerRegistry`) still has no external consumer — no
+  Dashboard, REST API, or MCP tool currently reads from any of it.
 - Windows-focused process-tree cleanup (`taskkill /t /f`) — the codebase runs cross-platform
   in principle, but this specific cleanup path is Windows-specific by design (POSIX process
   groups aren't used).
@@ -102,6 +104,8 @@ durable full-fidelity replay are no longer deferred — see "Resolved since v1.0
 Web Dashboard, REST API, CLI Dashboard, VS Code Extension, Prometheus Exporter, Grafana
 Adapter, Plugin SDK — all contract-designed in ADR-0003, none implemented. (`delegate_replay`,
 the first `ObservabilityService`-backed MCP tool, is no longer future work — see "Resolved
-since v1.0.0" above and [ADR-0007](../adr/ADR-0007-mcp-replay-access.md). Additional future MCP
-tools, e.g. `delegate_metrics`, remain unimplemented.)
+since v1.0.0" above and [ADR-0007](../adr/ADR-0007-mcp-replay-access.md). `delegate_metrics`,
+the second, is no longer future work either — see
+[ADR-0008](../adr/ADR-0008-mcp-metrics-access.md). Additional future MCP tools remain
+unimplemented.)
 See [ROADMAP_v1.1.md](ROADMAP_v1.1.md).

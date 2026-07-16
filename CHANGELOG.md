@@ -1,5 +1,30 @@
 # Changelog
 
+## [2.6.0] - 2026-07-16
+
+MCP Metrics Access Sprint — implements
+[ADR-0008](docs/adr/ADR-0008-mcp-metrics-access.md), a new `delegate_metrics` tool that gives
+any MCP client read-only access to `ObservabilityService.getMetrics()` — the second external
+consumer of the observability foundation built across the `ADR-0003`/`ADR-0006` sprints,
+reusing `ADR-0007`'s Platform Transport-Agnosticism Verification by reference rather than
+re-deriving it. 284/284 tests passing (281 pre-existing + 3 new this sprint).
+
+### Added
+- **`delegate_metrics` MCP tool** (`src/handlers/delegateMetricsHandler.js`, registered in
+  `src/server/mcpServer.js`): read-only, no input, wraps
+  `ObservabilityService.getMetrics()` verbatim — returns `{ content: [{ type: "text", text:
+  JSON.stringify(metrics) }], structuredContent: metrics }`, a thinner wrapper than
+  `delegate_replay`'s (no branching at all). `getSnapshot()`, `getTimeline()`, and
+  `ConsumerRegistry` remain out of scope — future waves, per the ADR.
+
+### Compatibility
+Zero change to any existing tool's schema — one net-new, additive MCP tool, **minor** per
+`docs/FOUNDATION_FREEZE.md`'s own versioning policy. Zero change to `ObservabilityService` or
+`MetricsCollector` — `delegate_metrics` calls `ObservabilityService.getMetrics()` exactly as it
+already existed, no reshaping, no new type. Full design detail in
+[ADR-0008](docs/adr/ADR-0008-mcp-metrics-access.md). 284/284 tests passing (281 pre-existing +
+3 new).
+
 ## [2.5.0] - 2026-07-16
 
 MCP Replay Access Sprint — implements
