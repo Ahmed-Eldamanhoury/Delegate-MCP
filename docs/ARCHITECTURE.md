@@ -1,12 +1,12 @@
 # Architecture
 
-Seven MCP tools split by concern so each piece is independently testable.
+Eight MCP tools split by concern so each piece is independently testable.
 
 ```
 server.js               backward-compat entrypoint (claude_desktop_config.json points here)
 src/
   cli/entry.js           boot sequence: load config, validate, health check, start server, graceful shutdown
-  server/mcpServer.js     builds the McpServer instance, owns the shared JobManager, registers all 7 tools
+  server/mcpServer.js     builds the McpServer instance, owns the shared JobManager, registers all 8 tools
   server/health.js        non-blocking check that the configured claude binary exists
   handlers/                one file per tool: MCP-shaped request/response formatting
   services/delegationService.js  shared submit path: builds an ExecutionContext, calls jobManager.submit(),
