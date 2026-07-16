@@ -32,8 +32,9 @@ document indexes them for a release audience rather than restating the evidence.
 
 - **`ConsumerRegistry` had no auto-expiry** (fixed 2.2.0): `pruneStale(maxAgeMs)` now removes
   consumers whose `lastSeenAt` is older than a caller-supplied age. The primitive is in place;
-  no consumer calls it yet, since `ObservabilityService` still has no external consumer (see
-  Current scope boundaries below) — wiring it into a scheduled sweep is still future work.
+  no consumer calls it yet — `delegate_replay` (ADR-0007) only calls `replay()`, never
+  `ConsumerRegistry`'s API, so this remains unused — wiring it into a scheduled sweep is still
+  future work.
 - **`MetricsCollector`'s artifact-count walk didn't filter directory names by `isValidJobId()`**
   (fixed 2.2.0): now reuses `isValidJobId()` exactly as `pruneWorkspaces()` does, so a
   non-UUID directory manually placed under `workspace/jobs/` no longer has its contents
