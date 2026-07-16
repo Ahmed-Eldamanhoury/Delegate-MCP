@@ -18,6 +18,7 @@ import { createDelegateModelsHandler } from "../handlers/delegateModelsHandler.j
 import { createDelegateCancelHandler } from "../handlers/delegateCancelHandler.js";
 import { createDelegateReplayHandler } from "../handlers/delegateReplayHandler.js";
 import { createDelegateMetricsHandler } from "../handlers/delegateMetricsHandler.js";
+import { createDelegateSnapshotHandler } from "../handlers/delegateSnapshotHandler.js";
 
 const TASK_DESCRIPTION =
   "Runs a one-shot Claude Code CLI session (headless) to execute a task, billed against the " +
@@ -245,6 +246,19 @@ export function createMcpServer({ config, logger, version }) {
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     createDelegateMetricsHandler({ observabilityService })
+  );
+
+  server.registerTool(
+    "delegate_snapshot",
+    {
+      title: "Get a delegation service snapshot",
+      description:
+        "Returns a point-in-time snapshot of delegation service state -- metrics plus the list of " +
+        "currently active (non-terminal) jobs -- read-only, no input required.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    createDelegateSnapshotHandler({ observabilityService })
   );
 
   // `eventHistoryStore` is exposed alongside `server`/`observabilityService` so it's reachable

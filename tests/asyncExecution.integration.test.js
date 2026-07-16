@@ -14,6 +14,7 @@ import { createDelegateHistoryHandler } from "../src/handlers/delegateHistoryHan
 import { createDelegateCancelHandler } from "../src/handlers/delegateCancelHandler.js";
 import { createDelegateReplayHandler } from "../src/handlers/delegateReplayHandler.js";
 import { createDelegateMetricsHandler } from "../src/handlers/delegateMetricsHandler.js";
+import { createDelegateSnapshotHandler } from "../src/handlers/delegateSnapshotHandler.js";
 import { createRuntimeEventBus } from "../src/services/runtimeEventBus.js";
 import { createObservabilityService } from "../src/services/observabilityService.js";
 import { EVENT_TYPES } from "../src/models/runtimeEvent.js";
@@ -457,6 +458,73 @@ test("delegate_metrics: returns empty metrics when no jobs have run", async () =
   assert.equal(response.structuredContent.completedJobs, 0);
   assert.equal(response.structuredContent.failedJobs, 0);
   assert.equal(response.structuredContent.cancelledJobs, 0);
+
+  // Must NOT be an error response
+  assert.equal(response.isError, undefined);
+});
+
+test("delegate_snapshot: returns structured snapshot matching observabilityService.getSnapshot() verbatim", async () => {
+  const bus = createRuntimeEventBus();
+  const jobManager = new JobManager({ bus });
+  const observability = createObservabilityService({ bus });
+  const snapshot = createDelegateSnapshotHandler({ observabilityService: observability });
+  buildHandlers(jobManager, makeStubService({ delayMs: 5 }));
+
+  // Run a job so getSnapshot() has an active job to report before it completes
+  const jobId = jobManager.submit(delayTask(20, "result"));
+
+  const response = await snapshot();
+
+  // Response shape: content (human-readable text) + structuredContent (machine-readable)
+  assert.ok(response.content);
+  assert.ok(Array.isArray(response.content));
+  assert.equal(response.content[0].type, "text");
+  assert.ok(typeof response.content[0].text === "string");
+  assert.ok(response.structuredContent);
+
+  // Structured content should match the snapshot object verbatim (no reshaping) --
+  // observability.getSnapshot() is called directly (not through the handler) as a second,
+  // independent proof that the handler doesn't reshape; takenAt is excluded from that
+  // comparison since getSnapshot() stamps a fresh live timestamp on every call, so two
+  // separate calls a moment apart may legitimately differ by a millisecond.
+  const parsedContent = JSON.parse(response.content[0].text);
+  assert.deepEqual(parsedContent, response.structuredContent);
+  const { takenAt: _takenAt, ...structuredRest } = response.structuredContent;
+  const { takenAt: _takenAt2, ...directRest } = observability.getSnapshot();
+  assert.deepEqual(structuredRest, directRest);
+
+  // Snapshot structure: {takenAt, metrics, activeJobs}
+  assert.equal(typeof response.structuredContent.takenAt, "string");
+  assert.equal(typeof response.structuredContent.metrics, "object");
+  assert.ok(Array.isArray(response.structuredContent.activeJobs));
+
+  await waitUntil(() => jobManager.getJob(jobId).status === "completed");
+
+  // Must NOT be an error response
+  assert.equal(response.isError, undefined);
+});
+
+test("delegate_snapshot: returns an empty activeJobs snapshot when no jobs have run", async () => {
+  const bus = createRuntimeEventBus();
+  const observability = createObservabilityService({ bus });
+  const snapshot = createDelegateSnapshotHandler({ observabilityService: observability });
+
+  const response = await snapshot();
+
+  // Response shape: content (human-readable text) + structuredContent (machine-readable)
+  assert.ok(response.content);
+  assert.ok(Array.isArray(response.content));
+  assert.equal(response.content[0].type, "text");
+  assert.ok(typeof response.content[0].text === "string");
+  assert.ok(response.structuredContent);
+
+  // Structured content should match the snapshot object
+  const parsedContent = JSON.parse(response.content[0].text);
+  assert.deepEqual(parsedContent, response.structuredContent);
+
+  // Snapshot structure: no active jobs yet
+  assert.equal(typeof response.structuredContent.takenAt, "string");
+  assert.deepEqual(response.structuredContent.activeJobs, []);
 
   // Must NOT be an error response
   assert.equal(response.isError, undefined);
