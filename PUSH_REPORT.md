@@ -20,8 +20,15 @@
 | `9693583` | Bump to 2.3.0, matching the Persistent Job Store Sprint's CHANGELOG entry |
 
 Final commit hash: `9693583aae6f01ccaac25cc7cf3cfc456c1dc1f1` — pushed to `origin/main`
-(`a633189..9693583`, fast-forward). No tag created, no GitHub Release created, per this
-push's explicit instructions.
+(`a633189..9693583`, fast-forward). No GitHub Release created, per this push's explicit
+instructions.
+
+**Update:** after this report was first written, the Observability Architecture Review
+(commit `541c4dc`) was pushed on top, and — matching this repo's own precedent of tagging
+every version bump (v2.0.0, v2.2.1, v2.2.2) — annotated tag `v2.3.0` was created on `main`'s
+new tip and pushed: `git rev-parse v2.3.0^{commit}` → `541c4dc33bd66456092625674604eebde96b4294`,
+confirmed identical to `main`'s `HEAD` at tag time via `git ls-remote --tags origin`
+(`refs/tags/v2.3.0^{}` → same hash). `v2.3.0` is now treated as frozen.
 
 ## Test results
 
@@ -63,9 +70,8 @@ it, since changing repository security settings wasn't requested.
   --method tools/list` returns the same 6 tools as every prior certification pass
   (`delegate_task`, `delegate_submit`, `delegate_status`, `delegate_history`,
   `delegate_models`, `delegate_cancel`), zero schema drift.
-- No tag created (v2.3.0 not tagged — recent version bumps in this repo's history
-  (2.2.1, 2.2.2) were each tagged, so this is a deliberate deviation from that
-  precedent per this push's explicit instructions, not an oversight).
+- Annotated tag `v2.3.0` created and pushed on `main`'s tip after the architecture review
+  landed (commit `541c4dc`), matching this repo's own tagging precedent (see Update above).
 - No GitHub Release created, per this push's explicit instructions.
 
 ## Remaining known limitations
