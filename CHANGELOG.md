@@ -8,7 +8,7 @@ MCP client read-only access to `ObservabilityService.replay(jobId)` — the firs
 consumer of the observability foundation built across the `ADR-0003` and `ADR-0006` sprints.
 Two commits (the handler, `createDelegateReplayHandler`, built via TDD as a thin wrapper with no
 replay/filtering/persistence logic of its own; then its registration as the MCP server's 7th
-tool). 281/281 tests passing (271 pre-existing + 10 new this sprint).
+tool). 281/281 tests passing (278 pre-existing + 3 new this sprint).
 
 ### Added
 - **`delegate_replay` MCP tool** (`src/handlers/delegateReplayHandler.js`, registered in
@@ -27,8 +27,8 @@ Zero change to any existing tool's schema — one net-new, additive MCP tool, **
 `ReplayEngine`, `TimelineStore`, or `EventHistoryStore` — `delegate_replay` calls
 `ObservabilityService.replay()` exactly as it already existed, no reshaping, no new type. Full
 design detail, the six-principle Platform Transport-Agnosticism Verification, and out-of-scope
-boundaries in [ADR-0007](docs/adr/ADR-0007-mcp-replay-access.md). 281/281 tests passing (271
-pre-existing + 10 new).
+boundaries in [ADR-0007](docs/adr/ADR-0007-mcp-replay-access.md). 281/281 tests passing (278
+pre-existing + 3 new).
 
 ## [2.4.0] - 2026-07-16
 
