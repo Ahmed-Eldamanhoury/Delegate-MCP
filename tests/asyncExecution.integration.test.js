@@ -13,6 +13,7 @@ import { createDelegateStatusHandler } from "../src/handlers/delegateStatusHandl
 import { createDelegateHistoryHandler } from "../src/handlers/delegateHistoryHandler.js";
 import { createDelegateCancelHandler } from "../src/handlers/delegateCancelHandler.js";
 import { createDelegateReplayHandler } from "../src/handlers/delegateReplayHandler.js";
+import { createDelegateMetricsHandler } from "../src/handlers/delegateMetricsHandler.js";
 import { createRuntimeEventBus } from "../src/services/runtimeEventBus.js";
 import { createObservabilityService } from "../src/services/observabilityService.js";
 import { EVENT_TYPES } from "../src/models/runtimeEvent.js";
@@ -394,5 +395,69 @@ test("delegate_replay: an unknown job returns source 'unavailable' with empty ti
   assert.match(response.content[0].text, /no replay data available/i);
 
   // Must NOT be an error response (this is the key difference from delegate_status)
+  assert.equal(response.isError, undefined);
+});
+
+test("delegate_metrics: returns structured metrics after a job runs", async () => {
+  const bus = createRuntimeEventBus();
+  const jobManager = new JobManager({ bus });
+  const observability = createObservabilityService({ bus });
+  const metrics = createDelegateMetricsHandler({ observabilityService: observability });
+  buildHandlers(jobManager, makeStubService({ delayMs: 5 }));
+
+  // Run a job to generate metrics
+  const jobId = jobManager.submit(delayTask(5, "result"));
+  await waitUntil(() => jobManager.getJob(jobId).status === "completed");
+
+  const response = await metrics();
+
+  // Response shape: content (human-readable text) + structuredContent (machine-readable)
+  assert.ok(response.content);
+  assert.ok(Array.isArray(response.content));
+  assert.equal(response.content[0].type, "text");
+  assert.ok(typeof response.content[0].text === "string");
+  assert.ok(response.structuredContent);
+
+  // Structured content should match the metrics object
+  const parsedContent = JSON.parse(response.content[0].text);
+  assert.deepEqual(parsedContent, response.structuredContent);
+
+  // Metrics structure: check key fields exist
+  assert.equal(typeof response.structuredContent.queuedJobs, "number");
+  assert.equal(typeof response.structuredContent.runningJobs, "number");
+  assert.equal(typeof response.structuredContent.completedJobs, "number");
+  assert.ok(response.structuredContent.completedJobs >= 1, "expected at least one completed job");
+
+  // Must NOT be an error response
+  assert.equal(response.isError, undefined);
+});
+
+test("delegate_metrics: returns empty metrics when no jobs have run", async () => {
+  const bus = createRuntimeEventBus();
+  const jobManager = new JobManager({ bus });
+  const observability = createObservabilityService({ bus });
+  const metrics = createDelegateMetricsHandler({ observabilityService: observability });
+
+  const response = await metrics();
+
+  // Response shape: content (human-readable text) + structuredContent (machine-readable)
+  assert.ok(response.content);
+  assert.ok(Array.isArray(response.content));
+  assert.equal(response.content[0].type, "text");
+  assert.ok(typeof response.content[0].text === "string");
+  assert.ok(response.structuredContent);
+
+  // Structured content should match the metrics object
+  const parsedContent = JSON.parse(response.content[0].text);
+  assert.deepEqual(parsedContent, response.structuredContent);
+
+  // Metrics structure: check key fields exist and are zero (no jobs run yet)
+  assert.equal(response.structuredContent.queuedJobs, 0);
+  assert.equal(response.structuredContent.runningJobs, 0);
+  assert.equal(response.structuredContent.completedJobs, 0);
+  assert.equal(response.structuredContent.failedJobs, 0);
+  assert.equal(response.structuredContent.cancelledJobs, 0);
+
+  // Must NOT be an error response
   assert.equal(response.isError, undefined);
 });

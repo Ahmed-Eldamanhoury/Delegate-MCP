@@ -197,8 +197,35 @@ test("createMcpServer registers delegate_replay as a 7th tool, alongside the exi
       "delegate_models",
       "delegate_cancel",
       "delegate_replay",
+      "delegate_metrics",
     ],
-    "expected exactly the existing six tools plus delegate_replay, registered in this order"
+    "expected exactly the existing six tools plus delegate_replay and delegate_metrics, registered in this order"
+  );
+});
+
+// --- ADR-0008 Task 2: delegate_metrics must be registered as the 8th MCP tool, wired to the
+// SAME observabilityService instance createMcpServer constructs ---
+
+test("createMcpServer registers delegate_metrics as an 8th tool, alongside the existing seven", () => {
+  const config = loadConfig({});
+  const logger = { info() {}, warn() {}, error() {} };
+
+  const { server } = createMcpServer({ config, logger, version: "test" });
+
+  const toolNames = Object.keys(server._registeredTools);
+  assert.deepEqual(
+    toolNames,
+    [
+      "delegate_task",
+      "delegate_submit",
+      "delegate_status",
+      "delegate_history",
+      "delegate_models",
+      "delegate_cancel",
+      "delegate_replay",
+      "delegate_metrics",
+    ],
+    "expected exactly the existing seven tools plus delegate_metrics, registered in this order"
   );
 });
 
