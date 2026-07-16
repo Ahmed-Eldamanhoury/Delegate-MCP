@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { selectJobStore, wireEventHistoryIfEnabled } from "../src/server/mcpServer.js";
+import { selectJobStore, wireEventHistoryIfEnabled, createMcpServer } from "../src/server/mcpServer.js";
 import { InMemoryJobStore } from "../src/services/jobStore.js";
 import { FileJobStore } from "../src/services/fileJobStore.js";
 import { createRuntimeEventBus } from "../src/services/runtimeEventBus.js";
@@ -59,3 +59,18 @@ test("wireEventHistoryIfEnabled wires a durable EventHistoryStore backed by conf
   assert.ok(existsSync(join(dir, `${jobId}.jsonl`)));
   unsubscribe();
 });
+
+// --- Task 5: createMcpServer() must expose ObservabilityService so its close() is reachable
+// at shutdown (previously constructed and immediately discarded -- ARCHITECTURE_REVIEW.md) ---
+
+test("createMcpServer returns both the MCP server and the ObservabilityService instance, not just the bare server", () => {
+  const config = loadConfig({});
+  const logger = { info() {}, warn() {}, error() {} };
+
+  const result = createMcpServer({ config, logger, version: "test" });
+
+  assert.ok(result.server, "expected a `server` field on the return value");
+  assert.ok(result.observabilityService, "expected an `observabilityService` field on the return value");
+  assert.equal(typeof result.observabilityService.close, "function");
+});
+

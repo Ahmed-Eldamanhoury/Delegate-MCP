@@ -132,6 +132,59 @@ test("only one of the three triggers (SIGINT/SIGTERM/stdin-end) is needed to shu
   assert.equal(exitCount, 1);
 });
 
+function fakeObservabilityService() {
+  let closeCalls = 0;
+  return {
+    close: () => {
+      closeCalls += 1;
+    },
+    get closeCalls() {
+      return closeCalls;
+    },
+  };
+}
+
+test("shutdown calls observabilityService.close() (unsubscribing from the bus) alongside server.close(), when one is provided", async () => {
+  const server = fakeServer();
+  const observabilityService = fakeObservabilityService();
+  const signalSource = new EventEmitter();
+  let exited = false;
+  registerShutdownHandlers(server, fakeLogger(), {
+    stdin: new EventEmitter(),
+    exit: () => {
+      exited = true;
+    },
+    signalSource,
+    observabilityService,
+  });
+
+  signalSource.emit("SIGINT");
+  await flushMicrotasks();
+
+  assert.equal(server.closeCalls, 1);
+  assert.equal(observabilityService.closeCalls, 1);
+  assert.equal(exited, true);
+});
+
+test("shutdown still works fine (doesn't throw, still exits) when observabilityService is omitted -- backward compat with the existing calling convention", async () => {
+  const server = fakeServer();
+  const signalSource = new EventEmitter();
+  let exited = false;
+  registerShutdownHandlers(server, fakeLogger(), {
+    stdin: new EventEmitter(),
+    exit: () => {
+      exited = true;
+    },
+    signalSource,
+  });
+
+  signalSource.emit("SIGINT");
+  await flushMicrotasks();
+
+  assert.equal(server.closeCalls, 1);
+  assert.equal(exited, true);
+});
+
 test("importing entry.js has no import-time side effects — it must not start the server", () => {
   const entryPath = fileURLToPath(new URL("../src/cli/entry.js", import.meta.url));
   const entryUrl = pathToFileURL(entryPath).href;

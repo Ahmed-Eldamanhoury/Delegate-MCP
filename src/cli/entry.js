@@ -18,13 +18,23 @@ import { createMcpServer } from "../server/mcpServer.js";
  *
  * @param {{close: () => Promise<void>}} server
  * @param {{info: Function, warn: Function, error: Function}} logger
- * @param {{stdin?: NodeJS.ReadStream, exit?: () => void, signalSource?: NodeJS.Process}} [deps]
+ * @param {{stdin?: NodeJS.ReadStream, exit?: () => void, signalSource?: NodeJS.Process, observabilityService?: {close: () => void}}} [deps]
  *   Injectable purely for testability -- production always uses the real `process`/`process.stdin`.
+ *   `observabilityService` is optional (Task 5, ADR-0006): when provided, its `close()` (which
+ *   unsubscribes it from the bus) is called alongside `server.close()`. Omitting it entirely
+ *   keeps this call byte-identical to before this field existed -- unsubscribing from the bus
+ *   is safe at any point in shutdown (the process is exiting either way), so this is
+ *   deliberately not ordered relative to `server.close()`.
  * @returns {(trigger: string) => void} the shutdown function itself, exposed for testability
  */
-export function registerShutdownHandlers(server, logger, { stdin = process.stdin, exit = () => process.exit(0), signalSource = process } = {}) {
+export function registerShutdownHandlers(
+  server,
+  logger,
+  { stdin = process.stdin, exit = () => process.exit(0), signalSource = process, observabilityService = undefined } = {}
+) {
   const shutdown = (trigger) => {
     logger.info("shutting down", { trigger });
+    observabilityService?.close?.();
     server
       .close()
       .catch((err) => logger.error("error during shutdown", { message: err.message }))
@@ -45,8 +55,8 @@ export async function main() {
   const health = await checkClaudeBinary(config);
   logger[health.ok ? "info" : "warn"]("claude binary health check", health);
 
-  const server = createMcpServer({ config, logger, version: VERSION });
-  registerShutdownHandlers(server, logger);
+  const { server, observabilityService } = createMcpServer({ config, logger, version: VERSION });
+  registerShutdownHandlers(server, logger, { observabilityService });
 
   await server.connect(new StdioServerTransport());
   logger.info("claude-delegate mcp server started", { version: VERSION });

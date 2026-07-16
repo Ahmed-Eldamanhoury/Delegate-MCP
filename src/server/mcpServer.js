@@ -89,7 +89,11 @@ export function createMcpServer({ config, logger, version }) {
   // bus itself (same pattern wireWorkspaceToEventBus already uses above), so no local binding
   // is needed here. Not yet exposed via any MCP tool; this wave wires the service itself, not
   // a consumer of it.
-  createObservabilityService({ bus, config, logger, maxTimelineHistory: config.maxJobHistory });
+  //
+  // Task 5: the instance itself IS kept (returned below, alongside `server`) so its close()
+  // (unsubscribe from the bus) is reachable during graceful shutdown -- previously constructed
+  // here and immediately discarded, so close() was never callable from anywhere.
+  const observabilityService = createObservabilityService({ bus, config, logger, maxTimelineHistory: config.maxJobHistory });
 
   // ADR-0006: EventHistoryStore is a new, independent bus.subscribeAll() consumer, opt-in via
   // config.eventHistory (default "memory" = off, byte-identical to before this feature existed).
@@ -181,5 +185,5 @@ export function createMcpServer({ config, logger, version }) {
     createDelegateCancelHandler({ jobManager })
   );
 
-  return server;
+  return { server, observabilityService };
 }
