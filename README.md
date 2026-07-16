@@ -174,7 +174,7 @@ Returns a human-readable summary plus `{ source, timeline }` as `structuredConte
   empty. Not treated as an error — a normal, informative response.
 
 ```json
-{ "source": "runtime", "timeline": [{ "timestamp": "...", "type": "job.started" }] }
+{ "source": "runtime", "timeline": [{ "timestamp": "...", "type": "JobStateChanged", "payload": { "to": "running" } }] }
 ```
 
 Works even with no configuration at all (falls back to the coarse `workspace` tier), and gets
