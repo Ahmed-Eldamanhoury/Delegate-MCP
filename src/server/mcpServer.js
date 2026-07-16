@@ -16,6 +16,7 @@ import { createDelegateStatusHandler } from "../handlers/delegateStatusHandler.j
 import { createDelegateHistoryHandler } from "../handlers/delegateHistoryHandler.js";
 import { createDelegateModelsHandler } from "../handlers/delegateModelsHandler.js";
 import { createDelegateCancelHandler } from "../handlers/delegateCancelHandler.js";
+import { createDelegateReplayHandler } from "../handlers/delegateReplayHandler.js";
 
 const TASK_DESCRIPTION =
   "Runs a one-shot Claude Code CLI session (headless) to execute a task, billed against the " +
@@ -215,6 +216,21 @@ export function createMcpServer({ config, logger, version }) {
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     createDelegateCancelHandler({ jobManager })
+  );
+
+  server.registerTool(
+    "delegate_replay",
+    {
+      title: "Replay a delegated job's event history",
+      description:
+        "Reconstructs a delegate_task/delegate_submit job's event history for viewing -- read-only, " +
+        "never re-executes anything. Returns the richest available source: 'runtime' (live, in-memory, " +
+        "full fidelity), 'durable' (on-disk full fidelity, only if CLAUDE_DELEGATE_EVENT_HISTORY=file " +
+        "was enabled), 'workspace' (coarse lifecycle summary), or 'unavailable'.",
+      inputSchema: { job_id: JOB_ID_FIELD },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    createDelegateReplayHandler({ observabilityService })
   );
 
   // `eventHistoryStore` is exposed alongside `server`/`observabilityService` so it's reachable

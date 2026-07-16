@@ -172,3 +172,33 @@ test("createMcpServer constructs a single EventHistoryStore and shares that SAME
   assert.equal(replayed.timeline.length, 1);
 });
 
+// --- ADR-0007 Task 2: delegate_replay must be registered as the 7th MCP tool, wired to the
+// SAME observabilityService instance createMcpServer already constructs and returns above ---
+// (No per-handler unit test file exists for any of the six existing tools -- ADR-0007's own
+// Testing plan notes this convention -- so this is the registration-level check the ADR calls
+// for; the SDK's McpServer doesn't expose a public tools-list getter, so this reads
+// `server._registeredTools`, the same object `registerTool` populates internally, per the brief's
+// "whatever the SDK instance exposes for introspection" guidance.)
+
+test("createMcpServer registers delegate_replay as a 7th tool, alongside the existing six", () => {
+  const config = loadConfig({});
+  const logger = { info() {}, warn() {}, error() {} };
+
+  const { server } = createMcpServer({ config, logger, version: "test" });
+
+  const toolNames = Object.keys(server._registeredTools);
+  assert.deepEqual(
+    toolNames,
+    [
+      "delegate_task",
+      "delegate_submit",
+      "delegate_status",
+      "delegate_history",
+      "delegate_models",
+      "delegate_cancel",
+      "delegate_replay",
+    ],
+    "expected exactly the existing six tools plus delegate_replay, registered in this order"
+  );
+});
+
