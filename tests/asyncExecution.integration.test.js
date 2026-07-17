@@ -73,7 +73,7 @@ function buildHandlers(jobManager, service) {
   wireWorkspaceToEventBus({ bus: jobManager.bus, jobManager, config, logger });
   const delegationService = createDelegationService({ jobManager, config, logger, service });
   return {
-    task: createDelegateTaskHandler({ config, logger, jobManager, service }),
+    task: createDelegateTaskHandler({ logger, jobManager, delegationService }),
     submit: createDelegateSubmitHandler({ logger, delegationService }),
     status: createDelegateStatusHandler({ delegationService }),
     history: createDelegateHistoryHandler({ delegationService }),
@@ -317,11 +317,16 @@ test("workspace: pruneWorkspaces keeps disk usage bounded across many completed 
   const jobManager = new JobManager({ maxConcurrent: 2 });
   const boundedConfig = { ...config, maxWorkspaceHistory: 3 };
   wireWorkspaceToEventBus({ bus: jobManager.bus, jobManager, config: boundedConfig, logger });
-  const task = createDelegateTaskHandler({
+  const delegationService = createDelegationService({
+    jobManager,
     config: boundedConfig,
     logger,
-    jobManager,
     service: makeStubService({ delayMs: 5 }),
+  });
+  const task = createDelegateTaskHandler({
+    logger,
+    jobManager,
+    delegationService,
   });
 
   for (let i = 0; i < 6; i++) {

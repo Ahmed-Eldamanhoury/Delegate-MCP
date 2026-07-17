@@ -147,7 +147,7 @@ export function createMcpServer({ config, logger, version }) {
       description: TASK_DESCRIPTION,
       inputSchema: DelegateTaskInputShape,
     },
-    createDelegateTaskHandler({ config, logger, jobManager })
+    createDelegateTaskHandler({ logger, jobManager, delegationService })
   );
 
   server.registerTool(
