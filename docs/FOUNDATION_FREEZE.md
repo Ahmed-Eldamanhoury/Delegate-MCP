@@ -27,7 +27,7 @@ Adding a new *optional* field with a default is not.
 `delegate_task` is synchronous (blocks until terminal, returns the CLI result shape:
 `{isError, content, structuredContent}` or the raw-text fallback). `delegate_submit` is
 non-blocking (`{success, job_id, status}` immediately). Both submit through
-`services/delegationService.js`'s `submitDelegation()` — the single path into `JobManager`.
+`services/delegationService.js`'s `DelegationService.submit()` — the single path into `JobManager`.
 
 ## Frozen Job lifecycle
 

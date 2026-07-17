@@ -43,14 +43,14 @@ tests/                    node:test unit + integration tests (no external test f
 
 ```
 delegate_task  ─┐                                        delegate_status ──┐
-                ├─> submitDelegation() ─> JobManager.submit() ─> Job store <─┼─ delegate_history
+                ├─> DelegationService.submit() ─> JobManager.submit() ─> Job store <─┼─ delegate_history
 delegate_submit ┘         (ExecutionContext + claudeCliService.invoke)      └─ delegate_cancel
 
 delegate_models — pure config introspection, does not touch JobManager or the CLI at all.
 ```
 
 `delegate_task` and `delegate_submit` accept the *same* input shape and both go through the
-same `submitDelegation()` helper (`services/delegationService.js`) — the only difference is
+same `DelegationService.submit()` method (`services/delegationService.js`) — the only difference is
 what happens after `jobManager.submit()` returns a job id:
 
 - **`delegate_task`** calls `jobManager.waitForCompletion(jobId)` and blocks until the job is
@@ -261,7 +261,7 @@ As of ADR-0002, terminal-side persistence is bus-driven: `workspaceEventBridge.j
 to `JobCompleted`/`JobFailed`/`JobCancelled`, refetches the full `Job` via
 `jobManager.getJob(id)`, and calls `persistJobArtifacts()` + `pruneWorkspaces()`.
 `createJobWorkspace()` (which writes `context.json`) is the one piece still called *directly*
-from `delegationService.submitDelegation()`, not via the bus — deliberately: it needs the
+from `delegationService`'s `DelegationService.submit()`, not via the bus — deliberately: it needs the
 unredacted `ExecutionContext` (including `environment`/`process.env`), which must never be
 duplicated into `JobManager`'s job record, since `job.metadata` is returned verbatim in
 `delegate_status`'s MCP response. Storing raw env vars there would leak secrets through the
