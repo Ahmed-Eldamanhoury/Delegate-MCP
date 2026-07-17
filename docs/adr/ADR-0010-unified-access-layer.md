@@ -77,9 +77,9 @@ as `mcpServer.js` already holds `observabilityService` today — not merged into
 
    ```js
    DelegationService = {
-     submit(input, toolName): jobId   // absorbs today's submitDelegation() body, plus input validation (see §2)
-     getJob(jobId): Job | undefined
-     listJobs({status?, limit?}?): Job[]
+     submit(input, toolName): jobId          // absorbs today's submitDelegation() body, plus input validation (see §2)
+     getJob(jobId): JobView | undefined       // toJobView(jobManager.getJob(jobId)) applied inside the service — see §2
+     listJobs({status?, limit?}?): JobSummary[]  // filter+slice+reverse+summarizeJob applied inside the service — see §2
      cancelJob(jobId): boolean
    }
    ```
@@ -135,7 +135,20 @@ Already transport-independent today, reused verbatim, zero changes required:
 - `OBSERVABILITY_FREEZE.md`'s frozen data shapes: `Metrics`, `TimelineEntry`, `Snapshot`,
   `ConsumerInfo`.
 
-**Two contract decisions this ADR makes explicitly** (both were open questions across the
+**View-shaping and list filtering move inside `DelegationService`, not the handler** — a
+placement decision, not left implicit in a type signature. `getJob(jobId)` calls
+`jobManager.getJob(jobId)` then `toJobView(...)` internally, returning the already-shaped
+`JobView | undefined`. `listJobs({status, limit})` calls `jobManager.listJobs()` (which itself
+takes zero arguments, confirmed `src/services/jobManager.js:63`), applies the `status` filter and
+the `slice(-limit).reverse()` ordering — both handler-resident in `delegateHistoryHandler.js`
+today, confirmed by direct read, and business-adjacent presentation policy sitting there by
+omission, not by design — then `summarizeJob(...)` on each result, returning `JobSummary[]`.
+Post-refactor, `delegateStatusHandler.js`/`delegateHistoryHandler.js`/`delegateCancelHandler.js`
+stop importing `src/models/job.js` at all — they only format whatever `DelegationService` already
+returns, the same "destructure / one service call / envelope-format" shape every other handler
+already holds to.
+
+**Two further contract decisions this ADR makes explicitly** (both were open questions across the
 research passes; neither is left unresolved here):
 
 - **Input validation.** `createExecutionContext(input, config)`
@@ -289,8 +302,8 @@ all of them import the same backend logic:
 
 | Concern | MCP (today) | REST (future) | Dashboard (future) |
 |---|---|---|---|
-| Get job status | `delegateStatusHandler` → `delegationService.getJob(id)` → `toJobView` → MCP envelope | `GET /jobs/:id` → `delegationService.getJob(id)` → `toJobView` → JSON body | Same call, in-process or via REST, → rendered view |
-| List jobs | `delegateHistoryHandler` → `delegationService.listJobs({status,limit})` → `summarizeJob` | `GET /jobs?status=&limit=` → identical call → JSON array | Same |
+| Get job status | `delegateStatusHandler` → `delegationService.getJob(id)` (view-shaped internally) → MCP envelope | `GET /jobs/:id` → identical call → JSON body | Same call, in-process or via REST, → rendered view |
+| List jobs | `delegateHistoryHandler` → `delegationService.listJobs({status,limit})` (filtered+summarized internally) | `GET /jobs?status=&limit=` → identical call → JSON array | Same |
 | Submit job | `delegateSubmitHandler`/`delegateTaskHandler` → `delegationService.submit(input, toolName)` | `POST /jobs` → identical call, but never blocks the request thread the way `delegate_task` does — polls or streams instead | Same, via REST |
 | Cancel job | `delegateCancelHandler` → `delegationService.cancelJob(id)` | `DELETE /jobs/:id` → identical call | Same |
 | Metrics/snapshot/replay | `delegate_metrics`/`delegate_snapshot`/`delegate_replay` → `observabilityService.*` | `GET /metrics`, `GET /snapshot`, `GET /jobs/:id/replay` → identical calls | Same, polled |
