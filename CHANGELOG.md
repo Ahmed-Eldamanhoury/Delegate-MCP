@@ -12,9 +12,9 @@ directly; the transitional `submitDelegation()` function has been removed now th
 callers have migrated. `delegate_task` keeps one documented exception
 (`jobManager.waitForCompletion()`/`.bus`, its frozen synchronous contract). Purely internal —
 **patch** per `docs/FOUNDATION_FREEZE.md`'s own versioning policy: zero MCP schema change, zero
-change to any tool's request/response shape, zero change to `ObservabilityService`. 308/308 tests
-passing (287 pre-existing + 21 new: Stage 1a's characterization suite pinning the pre-refactor
-baseline, plus `DelegationService` unit tests).
+change to any tool's request/response shape, zero change to `ObservabilityService`. 313/313 tests
+passing (287 pre-existing + 26 new: Stage 1a's characterization suite pinning the pre-refactor
+baseline, `DelegationService` unit tests, and a structural boundary test).
 
 ### Added
 - **`DelegationService`** (`src/services/delegationService.js`): `submit`/`getJob`/`listJobs`/
@@ -27,6 +27,10 @@ baseline, plus `DelegationService` unit tests).
   `tools/list` schema for all 9 tools and closes prior gaps (`delegate_models` had no test at
   all; `delegate_status`/`delegate_cancel`'s unknown-job-id paths and `delegate_history`'s
   status-filter/limit/ordering semantics were untested).
+- **Structural transport-boundary test** (`tests/transportBoundary.test.js`): a permanent,
+  CI-gateable check that the 5 write-side handlers depend on `DelegationService` only, never
+  `JobManager` directly, except `delegate_task`'s one documented exception — the write-side
+  analog of how `OBSERVABILITY_FREEZE.md`'s Passive Observation Rule is verified structurally.
 
 ### Changed
 - `docs/FOUNDATION_FREEZE.md`'s frozen execution-contract sentence now names
