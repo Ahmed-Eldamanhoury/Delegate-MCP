@@ -86,8 +86,11 @@ reason repeated in Future Dashboard compatibility below).
 - Name, explicitly, every place REST's behavior will legitimately diverge from MCP's (blocking
   `delegate_task` has no mirror; error message strictness is stricter; metrics/snapshot are
   process-scoped; a repeat `DELETE` on an already-cancelled job is idempotent (200) under REST
-  where MCP's `delegate_cancel` treats the identical state as a failure — see Cancellation) so no
-  future reader mistakes a disclosed asymmetry for a bug.
+  where MCP's `delegate_cancel` treats the identical state as a failure — see Cancellation; **a
+  request body over 1 MiB is rejected by REST with 413 while the identical `prompt` submitted via
+  MCP has no length limit at all today (`DelegateTaskInputShape.prompt` is a bare `z.string()`,
+  `src/models/schemas.js` — confirmed by direct read) — see Security**) so no future reader mistakes
+  a disclosed asymmetry for a bug.
 
 ## Non-goals
 
@@ -198,11 +201,17 @@ security decisions are:
    correctly identified this as missing entirely from the first draft. Specified in full:
    - **Maximum accepted size: 1 MiB (`CLAUDE_DELEGATE_REST_MAX_BODY_BYTES`, overridable)**, applied
      only to `POST /v1/jobs` (the one route with a request body). Sized to comfortably fit a
-     realistic `prompt` (tens of thousands of words of text is well under 1 MiB) while bounding a
-     single request's worst-case memory footprint independent of trust level — this is a resource
-     bound, not a trust decision; even a legitimate token-holder's request is capped, the same way
-     `JobManager`'s `maxConcurrentJobs`/`max_budget_usd`/`spawnTimeoutMs` already bound other
-     dimensions of a single job's resource cost regardless of who submitted it.
+     realistic `prompt` (tens of thousands of words of text is well under 1 MiB — roughly
+     56–557 KiB at 5.7 bytes/word including the space, for 10,000–100,000 words of typical
+     Latin-script text) while bounding a single request's worst-case memory footprint independent
+     of trust level — this is a resource bound, not a trust decision; even a legitimate
+     token-holder's request is capped. **Disclosed precisely, not glossed over**: unlike
+     `JobManager`'s `maxConcurrentJobs`/`max_budget_usd`/`spawnTimeoutMs` (which are
+     transport-agnostic, enforced inside `JobManager` itself for every caller), this bound is
+     **REST-only** — MCP's `DelegateTaskInputShape.prompt` (`src/models/schemas.js`) is a bare
+     `z.string()` with no length limit today, confirmed by direct read. This is therefore a real,
+     new REST/MCP behavioral divergence for an identical oversized `prompt`, named explicitly in
+     Goals rather than implied to be symmetric with the transport-agnostic bounds above.
    - **Threat model justification**: Risk Analysis > Security's existing reasoning ("any caller
      with the token is a fully-trusted actor already") correctly rules out rate-limiting untrusted
      volume, but does **not** cover a single oversized request's memory cost — hand-buffering an
@@ -832,14 +841,30 @@ as a real gap adjacent to Rollback's "zero blast radius" claim.** Specified in f
      202 immediately; it does not wait for the job to finish — see Async jobs), so no in-flight
      *HTTP request* is ever left half-answered by this step.
   2. **A bounded grace period (default 5s, `CLAUDE_DELEGATE_REST_SHUTDOWN_GRACE_MS`)** during which
-     any `JobManager`-tracked job still `running` (an actual CLI subprocess in flight) is allowed to
-     finish naturally — REST does **not** abort a running job just because a shutdown signal
-     arrived; a shutdown is not a cancellation request.
-  3. **After the grace period, any job still `running` is force-cancelled** — `cancelJob(id)` is
-     called on each (the same abort path `DELETE /v1/jobs/:id` already uses), then the process
-     exits. This bounds worst-case shutdown latency instead of hanging indefinitely on a
-     long-running job, while still giving genuinely-fast jobs a real chance to finish and have
-     their terminal state recorded before exit.
+     every `JobManager`-tracked non-terminal job — `queued`, `starting`, or `running` — is allowed
+     to finish naturally. REST does **not** cancel anything just because a shutdown signal arrived;
+     a shutdown is not a cancellation request. (An earlier draft said "still `running`," implying
+     `queued` jobs were unaddressed — they are not: both cases are covered by the same step, since
+     `cancelJob(id)`, per `src/services/jobManager.js`'s own two branches, already handles a
+     `queued` job by removing it from the pending list and transitioning it directly to
+     `cancelled` — synchronously, no wait needed — separately from a `running` job's asynchronous
+     abort path below.)
+  3. **After the grace period, every job still non-terminal is force-cancelled, and the shutdown
+     sequence explicitly waits for that cancellation to actually settle before exiting — up to one
+     additional bounded window, not indefinitely.** Precisely, since `JobManager.cancelJob(id)` on
+     a `running` job is synchronous and fire-and-forget (it calls
+     `this.running.get(id)?.abort()` and returns immediately — the subprocess kill and the job's
+     transition to a terminal status happen later, asynchronously, inside `_run()`), the sequence
+     is: call `cancelJob(id)` on every remaining non-terminal job, then `await` each one's
+     `waitForCompletion(id)` (already an existing `JobManager` method, reused verbatim — not new),
+     racing that against a second, shorter bounded timeout (default 2s,
+     `CLAUDE_DELEGATE_REST_SHUTDOWN_FORCE_EXIT_MS`). If every cancelled job settles within that
+     second window, the process exits with every terminal state correctly recorded. If a subprocess
+     doesn't die in time (an already-disclosed platform limit, not a new one — see ungraceful
+     termination below), the process exits anyway rather than hanging forever, and that job's final
+     recorded state is whatever `JobManager`/`FileJobStore` captured up to that point — an explicit,
+     bounded trade-off, not a silent gap. An earlier draft asserted "their terminal state recorded
+     before exit" without specifying this wait step at all; this is the fix.
   4. `observabilityService.close()`/the `RuntimeEventBus` unsubscribe run as the final step,
      mirroring `entry.js`'s existing shutdown closure exactly (same pattern, new process).
 - **Process termination (ungraceful — `kill -9`, a crash, a Task Manager "End Task")**: no grace
@@ -852,16 +877,19 @@ as a real gap adjacent to Rollback's "zero blast radius" claim.** Specified in f
   mechanism this codebase already has for the stdio path (`docs/releases/KNOWN_LIMITATIONS.md`
   names existing Windows-focused process-tree cleanup, `taskkill /t /f`) rather than inventing a
   second one specific to REST.
-- **Interaction with `JobStore`**: if `config.jobStore="file"` (`ADR-0005`), any job left
-  `queued`/`starting`/`running` at the moment of an *ungraceful* stop is corrected to `failed` the
-  next time **any** process (REST or MCP) hydrates that `jobStoreDir` — `ADR-0005`'s existing
-  hydration-time recovery logic ("a job that was queued/starting/running when the process died...
-  is rewritten in place as failed") already covers this; it is not a new mechanism this ADR needs
-  to design, only a property this ADR can now correctly claim REST inherits for free. With the
-  default `config.jobStore="memory"`, the job record simply vanishes with the process, on both
-  graceful and ungraceful shutdown alike — identical to how an MCP stdio session's in-memory job
-  history already vanishes when that process exits today; REST introduces no new data-loss mode
-  here, only a new process that can independently exit.
+- **Interaction with `JobStore`**: if `config.jobStore="file"` (`ADR-0005`), any job still
+  `queued`/`starting`/`running` at the actual moment the process exits — whether that's an
+  *ungraceful* stop (no grace period ran at all) or a *graceful* stop whose force-exit window
+  (step 3 above) elapsed before every cancellation settled — is corrected to `failed` the next time
+  **any** process (REST or MCP) hydrates that `jobStoreDir`. `ADR-0005`'s existing hydration-time
+  recovery logic ("a job that was queued/starting/running when the process died... is rewritten in
+  place as failed") already covers both cases identically; it is not a new mechanism this ADR needs
+  to design, only a property this ADR can now correctly claim REST inherits for free, in the
+  graceful-but-timed-out case as well as the fully ungraceful one. With the default
+  `config.jobStore="memory"`, the job record simply vanishes with the process, on every shutdown
+  path alike — identical to how an MCP stdio session's in-memory job history already vanishes when
+  that process exits today; REST introduces no new data-loss mode here, only a new process that can
+  independently exit.
 - **Client-visible behavior**: because every REST interaction is async/poll-based (Async jobs), a
   client mid-poll during shutdown simply sees its next `GET /v1/jobs/:id` start failing (connection
   refused) once step 1 above completes — no client is ever left holding an open connection waiting
