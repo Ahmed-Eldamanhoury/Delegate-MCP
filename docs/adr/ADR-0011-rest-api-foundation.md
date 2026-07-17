@@ -85,7 +85,9 @@ reason repeated in Future Dashboard compatibility below).
   colocation was already explicitly rejected there).
 - Name, explicitly, every place REST's behavior will legitimately diverge from MCP's (blocking
   `delegate_task` has no mirror; error message strictness is stricter; metrics/snapshot are
-  process-scoped) so no future reader mistakes a disclosed asymmetry for a bug.
+  process-scoped; a repeat `DELETE` on an already-cancelled job is idempotent (200) under REST
+  where MCP's `delegate_cancel` treats the identical state as a failure — see Cancellation) so no
+  future reader mistakes a disclosed asymmetry for a bug.
 
 ## Non-goals
 
@@ -287,9 +289,18 @@ produces the same 404/200-unavailable outcome MCP already produces for a bad id 
 
 **Mechanism: a single shared-secret bearer token**, generated via `crypto.randomBytes(32)` at
 first REST-process boot if `CLAUDE_DELEGATE_REST_TOKEN` is not set explicitly, persisted to a file
-(`CLAUDE_DELEGATE_REST_TOKEN_FILE`, default `<project>/.delegate-rest-token`) — mirroring the
-existing env-var-with-generated-default pattern already used throughout `src/config/index.js`
-(`workspaceRoot`, `jobStoreDir`, `eventHistoryDir` all follow this exact shape).
+(`CLAUDE_DELEGATE_REST_TOKEN_FILE`, default `<project>/.delegate-rest-token`). This mirrors, in
+**shape** only, the existing env-var-with-a-default pattern already used throughout
+`src/config/index.js` (`workspaceRoot`, `jobStoreDir`, `eventHistoryDir` each resolve as `env.X ||
+DEFAULT_X`) — precedent for "an env var overrides a computed default" being this codebase's
+established idiom. Those three, however, are static computed directory-path defaults (a fixed path
+under `PROJECT_ROOT`, or the env var passed through verbatim) — never anything cryptographically
+random, and never generated-once-then-persisted-to-disk at boot. The generate-a-secret-and-persist-
+it-to-a-file **mechanism** itself — `crypto.randomBytes(32)` plus a first-boot write to
+`CLAUDE_DELEGATE_REST_TOKEN_FILE` — is genuinely new to this codebase; it exists because REST is
+the first component that needs a secret at all, not because a prior instance of this exact
+mechanism already runs today. Stated plainly here rather than overstating existing precedent for
+it.
 
 - Sent only via an `Authorization: Bearer <token>` header — never a query string (avoids leaking
   the token through URL logging, `Referer` headers, or caching).
@@ -613,14 +624,31 @@ cancelled = delegationService.cancelJob(id)
 after = delegationService.getJob(id)
 
 if (cancelled)                        → 200 { job_id, status: after.status }   // accepted; may still be settling
-else if (after.status === "cancelled") → 200 { job_id, status: "cancelled" }    // idempotent repeat DELETE succeeds
+else if (after.status === "cancelled") → 200 { job_id, status: "cancelled" }    // idempotent repeat DELETE — see disclosed asymmetry below
 else                                    → 409 { error: { code: "JOB_NOT_CANCELLABLE" } }
 ```
 
-The idempotency fix — a repeated `DELETE` on an already-cancelled job returns 200, not 409 — is a
-pure transport-adapter status-code mapping decision, zero change to `cancelJob()`'s boolean return
-or `JobManager`'s state machine. 409 is reserved for the genuine conflict: the job reached
-`completed`/`failed` before cancellation could take effect.
+409 is reserved for the genuine conflict: the job reached `completed`/`failed` before cancellation
+could take effect. Zero change to `cancelJob()`'s boolean return or `JobManager`'s state machine
+either way — the routing logic above only re-interprets an existing boolean at the HTTP layer, it
+does not alter what that boolean means or how `JobManager` computes it.
+
+**Deliberate, disclosed asymmetry from MCP** (per this ADR's own Goals-section commitment to name
+every such divergence, alongside blocking `delegate_task`, error-message strictness, and
+metrics/snapshot process-scoping): a repeat `DELETE` on an already-cancelled job is a case where
+REST and MCP genuinely diverge in observable behavior for the identical server state, not merely in
+transport encoding of the same outcome. MCP's `delegate_cancel` tool is registered with
+`idempotentHint: false` (`src/server/mcpServer.js:224`), and its handler
+(`src/handlers/delegateCancelHandler.js:9-19`) returns `isError: true` — *"Job `<id>` could not be
+cancelled (status: cancelled)"* — for exactly the state (`cancelJob()` returns `false` because the
+job is already `cancelled`) that this REST design instead maps to a **200** success response. This
+ADR chooses idempotent-`DELETE` semantics for REST (matching ordinary HTTP convention, where
+repeating a successful `DELETE` should not itself become an error) over mirroring MCP's stricter,
+non-idempotent framing for that same state — a considered choice, not an oversight, but a real
+behavioral divergence a caller could observe by driving both transports against the same job. It is
+named here explicitly, alongside the `/replay` status-code asymmetry (Error model) and the
+`/timeline` source-field gap (Filtering), rather than left filed only as "a pure status-code mapping
+decision."
 
 ## Long polling
 
