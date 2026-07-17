@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [2.7.1] - 2026-07-17
 
 Stage 1a/1b of `ADR-0010` (Unified Access Layer) — implements
 [ADR-0010](docs/adr/ADR-0010-unified-access-layer.md): a new `DelegationService`
