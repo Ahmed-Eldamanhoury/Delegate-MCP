@@ -71,10 +71,10 @@ function buildHandlers(jobManager, service) {
   // Workspace persistence is a bus subscriber now (ADR-0002 Phase 4) — mcpServer.js wires
   // this in production; tests must wire it explicitly for each JobManager they construct.
   wireWorkspaceToEventBus({ bus: jobManager.bus, jobManager, config, logger });
-  const delegationService = createDelegationService({ jobManager, config, logger });
+  const delegationService = createDelegationService({ jobManager, config, logger, service });
   return {
     task: createDelegateTaskHandler({ config, logger, jobManager, service }),
-    submit: createDelegateSubmitHandler({ config, logger, jobManager, service }),
+    submit: createDelegateSubmitHandler({ logger, delegationService }),
     status: createDelegateStatusHandler({ delegationService }),
     history: createDelegateHistoryHandler({ delegationService }),
     cancel: createDelegateCancelHandler({ delegationService }),

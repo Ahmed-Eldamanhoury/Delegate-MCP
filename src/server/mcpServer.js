@@ -158,7 +158,7 @@ export function createMcpServer({ config, logger, version }) {
       inputSchema: DelegateTaskInputShape,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    createDelegateSubmitHandler({ config, logger, jobManager })
+    createDelegateSubmitHandler({ logger, delegationService })
   );
 
   server.registerTool(
