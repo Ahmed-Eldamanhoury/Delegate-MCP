@@ -1,13 +1,7 @@
-import { summarizeJob } from "../models/job.js";
-
-/** @param {{jobManager: import("../services/jobManager.js").JobManager}} deps */
-export function createDelegateHistoryHandler({ jobManager }) {
+/** @param {{delegationService: ReturnType<import("../services/delegationService.js").createDelegationService>}} deps */
+export function createDelegateHistoryHandler({ delegationService }) {
   return async function delegateHistoryHandler({ limit, status }) {
-    let jobs = jobManager.listJobs();
-    if (status) jobs = jobs.filter((job) => job.status === status);
-
-    // store preserves insertion (chronological) order; take the most recent `limit`.
-    const summaries = jobs.slice(-limit).reverse().map(summarizeJob);
+    const summaries = delegationService.listJobs({ status, limit });
 
     const text = summaries.length
       ? summaries

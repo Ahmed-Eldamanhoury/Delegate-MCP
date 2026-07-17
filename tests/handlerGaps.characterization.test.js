@@ -96,7 +96,8 @@ test("delegate_cancel: an already-terminal job's error message names its actual 
 
 test("delegate_history: status filter returns only jobs matching that exact status", async () => {
   const jobManager = newJobManager();
-  const history = createDelegateHistoryHandler({ jobManager });
+  const delegationService = newDelegationService(jobManager);
+  const history = createDelegateHistoryHandler({ delegationService });
   const cancel = createDelegateCancelHandler({ jobManager });
 
   const completedId = jobManager.submit(delayTask(5, "ok"));
@@ -118,7 +119,8 @@ test("delegate_history: status filter returns only jobs matching that exact stat
 
 test("delegate_history: limit returns exactly N jobs, most-recently-submitted first", async () => {
   const jobManager = newJobManager();
-  const history = createDelegateHistoryHandler({ jobManager });
+  const delegationService = newDelegationService(jobManager);
+  const history = createDelegateHistoryHandler({ delegationService });
 
   // Short delay, but still long enough that all 5 submits land (synchronously) before any
   // completes -- and explicitly drained below so no job outlives this test (matching the
@@ -143,7 +145,8 @@ test("delegate_history: limit returns exactly N jobs, most-recently-submitted fi
 
 test("delegate_history: default limit is 20 when the handler is called with no arguments at all", async () => {
   const jobManager = newJobManager();
-  const history = createDelegateHistoryHandler({ jobManager });
+  const delegationService = newDelegationService(jobManager);
+  const history = createDelegateHistoryHandler({ delegationService });
   const ids = [0, 1, 2].map((i) => jobManager.submit(delayTask(20, `job-${i}`)));
 
   // The handler itself takes whatever it's given; the 20-default lives in the MCP schema
@@ -155,9 +158,29 @@ test("delegate_history: default limit is 20 when the handler is called with no a
   await Promise.all(ids.map((id) => jobManager.waitForCompletion(id)));
 });
 
+test("delegate_history: default limit is 20 when the handler is called with no explicit limit, capping more than 20 jobs end-to-end", async () => {
+  const jobManager = newJobManager();
+  const delegationService = newDelegationService(jobManager);
+  const history = createDelegateHistoryHandler({ delegationService });
+  const ids = [];
+  for (let i = 0; i < 25; i++) {
+    ids.push(jobManager.submit(delayTask(5, `job-${i}`)));
+  }
+
+  // STAGE_1B_DESIGN_PACKAGE.md acceptance criterion 5: delegationService.listJobs() defaults
+  // limit to 20 when not supplied. Proven at the unit level for the service itself in WP1's
+  // tests; this proves the same default flows all the way through the handler now that it's
+  // rerouted through delegationService instead of calling jobManager directly.
+  const response = await history({ limit: undefined, status: undefined });
+  assert.equal(response.structuredContent.jobs.length, 20);
+
+  await Promise.all(ids.map((id) => jobManager.waitForCompletion(id)));
+});
+
 test("delegate_history: no jobs recorded yet returns an empty list with a human-readable placeholder", async () => {
   const jobManager = newJobManager();
-  const history = createDelegateHistoryHandler({ jobManager });
+  const delegationService = newDelegationService(jobManager);
+  const history = createDelegateHistoryHandler({ delegationService });
 
   const response = await history({ limit: 20 });
 

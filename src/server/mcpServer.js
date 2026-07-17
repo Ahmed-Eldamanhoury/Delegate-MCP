@@ -196,7 +196,7 @@ export function createMcpServer({ config, logger, version }) {
       },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    createDelegateHistoryHandler({ jobManager })
+    createDelegateHistoryHandler({ delegationService })
   );
 
   server.registerTool(
