@@ -1,5 +1,46 @@
 # Changelog
 
+## [Unreleased]
+
+Stage 1a/1b of `ADR-0010` (Unified Access Layer) — implements
+[ADR-0010](docs/adr/ADR-0010-unified-access-layer.md): a new `DelegationService`
+(`src/services/delegationService.js`) is now the write-side counterpart to
+`ObservabilityService`, the single object every MCP handler calls to submit, query, list, or
+cancel a job. All five write-side tools (`delegate_task`, `delegate_submit`, `delegate_status`,
+`delegate_history`, `delegate_cancel`) now route through it instead of calling `JobManager`
+directly; the transitional `submitDelegation()` function has been removed now that both its
+callers have migrated. `delegate_task` keeps one documented exception
+(`jobManager.waitForCompletion()`/`.bus`, its frozen synchronous contract). Purely internal —
+**patch** per `docs/FOUNDATION_FREEZE.md`'s own versioning policy: zero MCP schema change, zero
+change to any tool's request/response shape, zero change to `ObservabilityService`. 308/308 tests
+passing (287 pre-existing + 21 new: Stage 1a's characterization suite pinning the pre-refactor
+baseline, plus `DelegationService` unit tests).
+
+### Added
+- **`DelegationService`** (`src/services/delegationService.js`): `submit`/`getJob`/`listJobs`/
+  `cancelJob`, mirroring `ObservabilityService`'s shape — held side by side, never merged, per
+  `ADR-0010`'s Single Mutation Path Rule. `listJobs()` gains one deliberate, disclosed addition
+  not present in the prior handler-resident logic: a `limit = 20` default (non-breaking for MCP,
+  whose schema already supplies 20 before any handler runs).
+- **Characterization test suite** (`tests/toolRegistry.characterization.test.js`,
+  `tests/handlerGaps.characterization.test.js`, `tests/delegationService.test.js`): pins the full
+  `tools/list` schema for all 9 tools and closes prior gaps (`delegate_models` had no test at
+  all; `delegate_status`/`delegate_cancel`'s unknown-job-id paths and `delegate_history`'s
+  status-filter/limit/ordering semantics were untested).
+
+### Changed
+- `docs/FOUNDATION_FREEZE.md`'s frozen execution-contract sentence now names
+  `DelegationService.submit()` instead of `submitDelegation()` as the single path into
+  `JobManager` — the underlying guarantee (one single path, same sync/async response shapes) is
+  unchanged.
+
+### Compatibility
+Zero MCP schema change across all 9 tools (Inspector `tools/list` byte-identical, independently
+verified). Zero change to any tool's request/response shape, `ObservabilityService`, or
+`RuntimeEventBus`'s event schema (`job.metadata.tool`/`JobQueued`'s `payload.tool` deliberately
+left unrenamed — see `ADR-0010`). See `ADR-0010_REVIEW_PACKAGE.md`/`STAGE_1B_DESIGN_PACKAGE.md`
+for the full architecture review and implementation design.
+
 ## [2.7.0] - 2026-07-16
 
 MCP Snapshot Access Sprint — implements

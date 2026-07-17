@@ -9,7 +9,9 @@ src/
   server/mcpServer.js     builds the McpServer instance, owns the shared JobManager, registers all 9 tools
   server/health.js        non-blocking check that the configured claude binary exists
   handlers/                one file per tool: MCP-shaped request/response formatting
-  services/delegationService.js  shared submit path: builds an ExecutionContext, calls jobManager.submit(),
+  services/delegationService.js  DelegationService (ADR-0010): submit/getJob/listJobs/cancelJob --
+                                    the single write-side path every handler routes through;
+                                    submit() builds an ExecutionContext, calls jobManager.submit(),
                                     creates the job's workspace directly (see Workspace section for why)
   services/claudeCliService.js   arg-building + spawn()-based CLI delegation, OutputChunk emission
   services/jobManager.js  background task runner: queueing, concurrency, cancellation, lifecycle, progress
