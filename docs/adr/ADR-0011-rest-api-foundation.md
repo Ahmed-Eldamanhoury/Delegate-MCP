@@ -194,6 +194,35 @@ security decisions are:
 5. **Stricter, REST-specific error responses** — never `err.message`/`err.stack` verbatim into an
    HTTP body, unlike `toToolErrorContent()`'s existing (and, for its trust boundary, correct)
    pass-through behavior (see Error model).
+6. **A bounded request body size on every route that accepts one** — an independent review
+   correctly identified this as missing entirely from the first draft. Specified in full:
+   - **Maximum accepted size: 1 MiB (`CLAUDE_DELEGATE_REST_MAX_BODY_BYTES`, overridable)**, applied
+     only to `POST /v1/jobs` (the one route with a request body). Sized to comfortably fit a
+     realistic `prompt` (tens of thousands of words of text is well under 1 MiB) while bounding a
+     single request's worst-case memory footprint independent of trust level — this is a resource
+     bound, not a trust decision; even a legitimate token-holder's request is capped, the same way
+     `JobManager`'s `maxConcurrentJobs`/`max_budget_usd`/`spawnTimeoutMs` already bound other
+     dimensions of a single job's resource cost regardless of who submitted it.
+   - **Threat model justification**: Risk Analysis > Security's existing reasoning ("any caller
+     with the token is a fully-trusted actor already") correctly rules out rate-limiting untrusted
+     volume, but does **not** cover a single oversized request's memory cost — hand-buffering an
+     unbounded body over Node's raw `http` module (this ADR's own stated only-allowed dependency,
+     see REST lifecycle) is a memory-exhaustion vector regardless of how trusted the sender is. This
+     is a resource-safety control, orthogonal to the auth/authorization reasoning already stated.
+   - **Enforcement location**: the REST transport-adapter layer only (Responsibilities bucket 1,
+     "protocol-specific request parsing"), *before* the body is ever fully buffered or handed to
+     `DelegationService.submit()`. Concretely: reject immediately if `Content-Length` exceeds the
+     limit (no buffering at all); if `Content-Length` is absent or understated, abort the connection
+     the moment accumulated bytes cross the limit while streaming — never buffer past the cap even
+     temporarily, so a client that omits or lies about `Content-Length` gains nothing.
+   - **Behavior when exceeded**: the connection/request is rejected before `JSON.parse` ever runs;
+     no partial body is retained.
+   - **HTTP status**: `413 Payload Too Large` (the standard status for this condition — deliberately
+     not `400`, which this ADR reserves for content that was fully received but semantically
+     invalid).
+   - **Error schema**: the same unified shape as every other error (see Error model), with a new
+     `code: "PAYLOAD_TOO_LARGE"` and a `message` naming the configured limit.
+   - **Testing requirement**: see Testing Strategy > Integration and > Security.
 
 ## Versioning
 
@@ -259,6 +288,7 @@ An optional `details` array is appended only for validation errors (the underlyi
 | Invalid submit body (`ZodError` from `DelegateTaskInputSchema.parse` inside `DelegationService.submit()`) | 400 | `INVALID_INPUT` (+ `details`) |
 | Bad query param (`status`/`type` enum, non-numeric `limit`) | 400 | `INVALID_QUERY_PARAM` |
 | Malformed JSON body | 400 | `MALFORMED_BODY` |
+| Request body exceeds `CLAUDE_DELEGATE_REST_MAX_BODY_BYTES` (default 1 MiB) | 413 | `PAYLOAD_TOO_LARGE` (see Security) |
 | Missing or wrong bearer token | 401 | `UNAUTHORIZED` |
 | Unexpected internal error | 500 | `INTERNAL_ERROR` (deliberately generic message) |
 
@@ -409,13 +439,36 @@ REST calls exactly the four existing methods, unchanged, with zero new parameter
 `submit(input, "rest")`, `getJob(jobId)`, `listJobs({status, limit})`, `cancelJob(jobId)`. The one
 narrow, disclosed addition: an `isValidJobId()`-style UUID-format guard added **inside
 `DelegationService.getJob()`/`cancelJob()` themselves** (shared by MCP too, benefiting it as well),
-since direct reads confirm both currently accept a bare, unvalidated string. Not currently
-exploitable via MCP (a garbage id simply misses the underlying `Map`/cache and returns
-`undefined`/`false`), but REST makes the `:id` path segment reachable by any token-holder at
-arbitrary volume/content for the first time, so a clean, structured rejection at the service layer
-(rather than letting an arbitrary string pass silently deeper) is a small, justified hardening —
-not new business logic, since it changes no return type and no existing caller's observed
-behavior for a well-formed id.
+since direct reads confirm both currently accept a bare, unvalidated string.
+
+**Exact behavior, specified precisely (an earlier draft left this ambiguous — an independent
+review correctly flagged it as a regression risk):** the guard returns exactly what today's
+lookup-miss path already returns for an unrecognized-but-well-formed id — `getJob()` returns
+`undefined`, `cancelJob()` returns `false` — for a malformed id too. **It never throws.** A
+malformed id is treated identically to an unknown id at every layer above `DelegationService`: MCP
+sees the same `"No job found with id <job_id>"` / `isError: true` response it already produces
+today for any id `jobManager.getJob()` doesn't recognize (`delegateStatusHandler.js`,
+`delegateCancelHandler.js`); REST sees the same 404 `JOB_NOT_FOUND` (see Error model) it already
+returns for a well-formed-but-unknown id. **Malformed and unknown are deliberately
+indistinguishable to every caller of either transport** — this is a `404`/"not found" outcome, not
+a structured `400`-class validation error, precisely because distinguishing them would be new,
+observable behavior neither `delegate_status`/`delegate_cancel` nor this ADR's own route table
+promised.
+
+**Why this specific choice, not a thrown/400 alternative:** a thrown error (mapped to REST's
+`INVALID_QUERY_PARAM`/`400`, or an uncaught exception surfacing to MCP as an unhandled rejection)
+would be new, observable behavior for a case both existing MCP handlers currently handle
+gracefully with zero try/catch anywhere in their bodies — a real risk to tools
+`docs/FOUNDATION_FREEZE.md` governs, and the exact regression an independent review of this ADR
+identified. Returning the guard's result through the *same* code path an unrecognized id already
+takes (rather than a new branch) is what makes "existing MCP behavior remains provably unchanged"
+true by construction, not by assertion — the guard is purely an early, cheap format check that
+short-circuits *before* a doomed `Map`/cache lookup, never a new decision point with a new outcome.
+
+**Explicit statement**: existing MCP behavior for `delegate_status`/`delegate_cancel` given a
+malformed job id is **unchanged** by this addition — before and after, the observable result is
+identical (`isError: true`, `"No job found with id <job_id>"`). See Testing Strategy > Unit and
+Testing Strategy > Integration for the regression-test requirement this implies.
 
 `submit()`'s existing `DelegateTaskInputSchema.parse(input)` call is REST's entire input-validation
 path (see Error model) — no second validation layer is introduced. `job.metadata.tool` continues
@@ -711,7 +764,9 @@ One piece of `ADR-0005` genuinely does carry over usefully, at no extra design c
 non-terminal-job-recovery-at-hydration logic ("a job that was queued/starting/running when the
 process died... is rewritten in place as failed") already gives REST correct crash-recovery
 semantics for free, if it runs with `jobStore=file` — an ungracefully-killed REST process leaving
-stale non-terminal job state is already solved, not a new gap for this ADR to design.
+stale non-terminal job state is already solved, not a new gap for this ADR to design. See Migration
+Strategy > Shutdown semantics below for the full specification of both graceful and ungraceful
+process-exit behavior, including how this recovery mechanism interacts with each.
 
 ## REST coexistence
 
@@ -763,16 +818,79 @@ Recommended next step, detailed below — not code, a plan.
 - REST's own bind host/port default to `127.0.0.1` and a documented fixed port, decided precisely at
   Stage C implementation-plan time, not invented here.
 
+## Shutdown semantics
+
+**An earlier draft left this entirely unspecified; an independent review correctly identified it
+as a real gap adjacent to Rollback's "zero blast radius" claim.** Specified in full:
+
+- **Shutdown sequence, on `SIGINT`/`SIGTERM`** (reusing the same signal-handling entry point
+  `src/cli/entry.js`'s `registerShutdownHandlers()` already establishes for stdio, applied
+  symmetrically to the new `restEntry.js` — not a new pattern invented for REST):
+  1. Stop accepting new HTTP connections (`server.close()`). Any request already fully received
+     completes normally — every route's own work is a single, fast `DelegationService`/
+     `ObservabilityService` call, never a long-running operation in itself (`POST /v1/jobs` returns
+     202 immediately; it does not wait for the job to finish — see Async jobs), so no in-flight
+     *HTTP request* is ever left half-answered by this step.
+  2. **A bounded grace period (default 5s, `CLAUDE_DELEGATE_REST_SHUTDOWN_GRACE_MS`)** during which
+     any `JobManager`-tracked job still `running` (an actual CLI subprocess in flight) is allowed to
+     finish naturally — REST does **not** abort a running job just because a shutdown signal
+     arrived; a shutdown is not a cancellation request.
+  3. **After the grace period, any job still `running` is force-cancelled** — `cancelJob(id)` is
+     called on each (the same abort path `DELETE /v1/jobs/:id` already uses), then the process
+     exits. This bounds worst-case shutdown latency instead of hanging indefinitely on a
+     long-running job, while still giving genuinely-fast jobs a real chance to finish and have
+     their terminal state recorded before exit.
+  4. `observabilityService.close()`/the `RuntimeEventBus` unsubscribe run as the final step,
+     mirroring `entry.js`'s existing shutdown closure exactly (same pattern, new process).
+- **Process termination (ungraceful — `kill -9`, a crash, a Task Manager "End Task")**: no grace
+  period runs at all; the process simply stops. **Stated honestly, not guaranteed away**: whether
+  an in-flight CLI subprocess is killed alongside its parent or becomes orphaned (continuing to run
+  detached) is platform- and spawn-option-dependent — the same category of limited guarantee
+  `ADR-0004` already discloses for Windows signal delivery ("Node's `SIGTERM` support on Windows is
+  documented as limited compared to POSIX"). This ADR does not invent a stronger guarantee than the
+  platform actually gives; Stage 2's implementation plan should reuse whatever process-tree cleanup
+  mechanism this codebase already has for the stdio path (`docs/releases/KNOWN_LIMITATIONS.md`
+  names existing Windows-focused process-tree cleanup, `taskkill /t /f`) rather than inventing a
+  second one specific to REST.
+- **Interaction with `JobStore`**: if `config.jobStore="file"` (`ADR-0005`), any job left
+  `queued`/`starting`/`running` at the moment of an *ungraceful* stop is corrected to `failed` the
+  next time **any** process (REST or MCP) hydrates that `jobStoreDir` — `ADR-0005`'s existing
+  hydration-time recovery logic ("a job that was queued/starting/running when the process died...
+  is rewritten in place as failed") already covers this; it is not a new mechanism this ADR needs
+  to design, only a property this ADR can now correctly claim REST inherits for free. With the
+  default `config.jobStore="memory"`, the job record simply vanishes with the process, on both
+  graceful and ungraceful shutdown alike — identical to how an MCP stdio session's in-memory job
+  history already vanishes when that process exits today; REST introduces no new data-loss mode
+  here, only a new process that can independently exit.
+- **Client-visible behavior**: because every REST interaction is async/poll-based (Async jobs), a
+  client mid-poll during shutdown simply sees its next `GET /v1/jobs/:id` start failing (connection
+  refused) once step 1 above completes — no client is ever left holding an open connection waiting
+  on a response that will never arrive, since REST never blocks a request on job completion in the
+  first place.
+- **Future extensibility**: a more sophisticated drain signal (e.g. a `GET /v1/health`
+  readiness/liveness endpoint reflecting "draining" state, so a well-behaved client/load-balancer
+  could stop routing new requests before `server.close()` even runs) is explicitly deferred — no
+  concrete consumer needs it yet, consistent with this ADR's other declined-with-trigger
+  extensibility items (see Future extensibility).
+
 ## Rollback
 
-Named in both senses explicitly:
+Named in both senses explicitly, now cross-referencing Shutdown semantics above for the one
+qualification an independent review correctly required:
 
-- **Operational rollback**: stop the REST process. Because it shares no in-memory state with MCP
-  (MCP coexistence) and never modifies `entry.js`/`mcpServer.js` (Compatibility with existing MCP
-  transport), this returns the system to its exact pre-REST state instantly with zero blast radius
-  on any live MCP session. Any shared on-disk `jobStore`/`eventHistory` files are left untouched,
-  exactly mirroring `ADR-0005`'s own documented file→memory flag-flip-back behavior ("existing
-  `*.json` files are left untouched on disk... nothing deletes them").
+- **Operational rollback**: stop the REST process, following the Shutdown semantics sequence above
+  (not an abrupt kill, unless the operator chooses one). Because REST shares no in-memory state
+  with MCP (MCP coexistence) and never modifies `entry.js`/`mcpServer.js` (Compatibility with
+  existing MCP transport), this returns the system to its exact pre-REST state instantly **with
+  zero blast radius on any live MCP session** — that specific claim is unchanged and unqualified.
+  **What is newly, explicitly qualified**: this does *not* mean zero blast radius for REST's *own*
+  in-flight jobs — a graceful stop gives them a bounded grace period then force-cancels anything
+  still running (Shutdown semantics); an ungraceful stop may orphan a running subprocess, bounded
+  only by whatever platform-level cleanup already exists for the stdio path, with the same honestly-
+  disclosed platform limits `ADR-0004` already states. Any shared on-disk `jobStore`/`eventHistory`
+  files are left untouched, exactly mirroring `ADR-0005`'s own documented file→memory
+  flag-flip-back behavior ("existing `*.json` files are left untouched on disk... nothing deletes
+  them").
 - **Code-level rollback**: revert/stop-deploying the new `restEntry.js` + REST route/adapter files.
   Since Stage 2 is scoped as a thin, 1:1 adapter with no new business logic (Responsibilities) and
   lives entirely in new files, this carries zero regression risk to any of the 9 existing, frozen
@@ -812,11 +930,19 @@ New modules needing pure unit tests, each testable without a live server:
   `createDelegateStatusHandler({delegationService})` already uses today. Assert the right method is
   called with the right args; nothing about either service's own logic is re-tested here.
 - **HTTP status-code mapping function** (`ZodError` → 400, `getJob() === undefined` → 404, generic
-  `Error` → 500) as a pure function, analogous to `src/utils/errors.js`'s `toToolErrorContent()`.
+  `Error` → 500, oversized body → 413) as a pure function, analogous to `src/utils/errors.js`'s
+  `toToolErrorContent()`.
 - **Path-param extraction** (`job_id` from `/v1/jobs/:id`) and **query-param parsing** (`?status=&
   limit=` → the exact `{status, limit}` shape `listJobs()` expects) as isolated parsing units.
 - **Auth-check function**, tested as a pure predicate (request with/without/with-wrong credential →
   allow/reject), no live server needed.
+- **`isValidJobId()`-style guard, as a pure function**: asserting it returns `undefined`/`false`
+  (never throws) for a malformed input, and passes a well-formed UUID through unchanged — the unit
+  test that makes Compatibility with DelegationService's "never throws" claim directly verifiable,
+  not just asserted in prose.
+- **Body-size-limit check, as a pure function/middleware unit**: given a `Content-Length` above the
+  configured max, asserts rejection *before* any buffering function is invoked at all (a spy/mock
+  proving the buffering step is never reached, not just that the eventual response is 413).
 
 ## Integration
 
@@ -834,6 +960,22 @@ real `createDelegationService`/`createObservabilityService`, a stub only at the 
   `DelegationService` instance to **both** an MCP handler call and a REST HTTP call, asserting both
   observe identical job state — this is the empirical proof of `ADR-0010` §5's "same backend, two
   transports" table, extended to a third transport, not just a narrative claim.
+- **Malformed-job-id regression test (required, not optional)**: run against the *current, real*
+  `delegateStatusHandler.js`/`delegateCancelHandler.js` *before* the `isValidJobId()` guard is added
+  to `DelegationService`, capturing their exact response for a non-UUID `job_id` as the baseline;
+  re-run the identical assertion *after* the guard lands and require byte-identical output. This is
+  what makes "existing MCP behavior remains unchanged" (Compatibility with DelegationService) an
+  empirically-proven property of Stage 2's actual implementation, not a claim taken on faith from
+  this ADR's prose — mirroring exactly how `ADR-0010`'s own Stage 1a characterization suite proved
+  its refactor byte-identical before merging.
+- **Request-body-size integration test**: a real HTTP `POST /v1/jobs` with a body one byte over the
+  configured limit is rejected with `413`/`PAYLOAD_TOO_LARGE` and the connection is not held open
+  waiting for more data; a body at/under the limit succeeds normally.
+- **Shutdown-behavior integration test**: submit a job with an artificially long-running stub CLI
+  service, send the process a `SIGTERM`, and assert (a) new connections are refused immediately,
+  (b) the in-flight job is force-cancelled only after the configured grace period elapses (not
+  immediately), and (c) the process exits within grace-period-plus-a-small-margin, never hanging
+  indefinitely.
 
 ## Contract
 
@@ -896,6 +1038,11 @@ test suite must concretely cover:
   as a frozen security invariant in `REST_FREEZE.md`, the same way `config.claudeBin`'s `shell:
   false` is called out in `docs/FOUNDATION_FREEZE.md` as "a frozen security invariant, not just a
   current implementation detail."
+- **Request-body-size enforcement** (see Security, Testing Strategy > Integration) is a resource-
+  safety control tested here too specifically because it applies regardless of authentication
+  state — confirm the size check runs (and rejects) independent of whether a valid token is also
+  present, so a large body from an *authenticated* caller is bounded exactly as strictly as one
+  from an unauthenticated one.
 
 ---
 
@@ -981,7 +1128,13 @@ away:
   operator-facing docs at Stage 2.
 - **An ungracefully-killed REST process** leaving stale non-terminal job state is already handled by
   `ADR-0005`'s existing hydration-time recovery logic if `jobStore=file` is enabled — named here as
-  a risk that is already mitigated, not a new gap.
+  a risk that is already mitigated, not a new gap. A *gracefully*-stopped process instead follows
+  the bounded grace-period-then-force-cancel sequence in Shutdown semantics, so this risk is
+  bounded in both the graceful and ungraceful case, not only the ungraceful one an earlier draft
+  discussed in isolation.
+- **An unbounded request body** (fixed by the 1 MiB default limit in Security) would otherwise have
+  been a memory-exhaustion vector independent of the token-based trust model — named here as a
+  resolved risk, not a remaining one, per Security's specification above.
 
 ## Future extensibility
 
@@ -1062,6 +1215,19 @@ away:
   `FileJobStore`'s snapshot semantics): rejected — no persistence mechanism for `MetricsCollector`'s
   aggregates exists today in any form, and no concrete consumer has asked for it; documenting the
   limitation is the chosen v1 answer (Compatibility with Observability, Operational risks).
+- **Throw a structured validation error for a malformed job id**, rather than returning
+  `undefined`/`false` through the existing unknown-id path: rejected — would be new, observable
+  behavior for a case `delegate_status`/`delegate_cancel` already handle gracefully today with no
+  try/catch, the exact regression an independent review of this ADR identified (Compatibility with
+  DelegationService).
+- **No request body size limit** (rely solely on token-based trust): rejected — bounds a different
+  risk dimension (single-request memory cost) than authentication bounds (who may call at all);
+  an independent review correctly identified this as an unaddressed gap, not a deliberately-scoped
+  non-goal (Security).
+- **Immediately cancel all in-flight jobs on any shutdown signal**, or conversely **wait
+  indefinitely for them to finish**: both rejected in favor of a bounded grace period followed by
+  force-cancellation — immediate cancellation would needlessly kill fast, nearly-finished jobs;
+  unbounded waiting risks a shutdown that never completes if a job hangs (Shutdown semantics).
 
 ## Compatibility impact
 
@@ -1069,13 +1235,17 @@ away:
   frozen execution contract, the frozen Job lifecycle, and the frozen `ExecutionContext` contract
   are unaffected.
 - **Zero change to `DelegationService`'s or `ObservabilityService`'s existing public method
-  signatures.** The one addition — an `isValidJobId()`-style guard inside `getJob()`/`cancelJob()`
-  — is additive input hardening, not a behavior change for any well-formed existing caller
-  (Compatibility with DelegationService).
+  signatures or observable behavior.** The one addition — an `isValidJobId()`-style guard inside
+  `getJob()`/`cancelJob()` — never throws and returns exactly what the existing unknown-id path
+  already returns (`undefined`/`false`); malformed and unknown ids are indistinguishable to every
+  existing caller, before and after (Compatibility with DelegationService).
 - **`job.metadata.tool`/`JobQueued`'s `payload.tool`: unchanged**, per `ADR-0010` §2's own decision,
   not reopened here. `EVENT_SCHEMA_VERSION` stays at `1`.
 - **A new sibling freeze document, `docs/REST_FREEZE.md`, will exist** once Stage 2 ships — decided
   here, authored later (Versioning). No existing freeze document's own frozen sections change.
+- **A request body size limit (1 MiB default) and a bounded shutdown grace period (5s default)**
+  are new, REST-only operational parameters (Security, Shutdown semantics) — neither affects MCP,
+  which has no request-body concept and whose own shutdown handling in `entry.js` is unchanged.
 - **Overall classification of this ADR itself**: no version bump — no code exists yet. Stage 2's
   own eventual implementation is expected to classify as **minor** against `docs/
   FOUNDATION_FREEZE.md`'s policy (new capability, zero change to any frozen guarantee), decided
