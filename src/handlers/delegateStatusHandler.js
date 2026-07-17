@@ -1,4 +1,4 @@
-/** @param {{delegationService: import("../services/delegationService.js").createDelegationService}} deps */
+/** @param {{delegationService: ReturnType<import("../services/delegationService.js").createDelegationService>}} deps */
 export function createDelegateStatusHandler({ delegationService }) {
   return async function delegateStatusHandler({ job_id }) {
     const view = delegationService.getJob(job_id);
