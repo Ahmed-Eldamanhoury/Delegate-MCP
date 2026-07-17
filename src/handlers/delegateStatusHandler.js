@@ -1,14 +1,11 @@
-import { toJobView } from "../models/job.js";
-
-/** @param {{jobManager: import("../services/jobManager.js").JobManager}} deps */
-export function createDelegateStatusHandler({ jobManager }) {
+/** @param {{delegationService: import("../services/delegationService.js").createDelegationService}} deps */
+export function createDelegateStatusHandler({ delegationService }) {
   return async function delegateStatusHandler({ job_id }) {
-    const job = jobManager.getJob(job_id);
-    if (!job) {
+    const view = delegationService.getJob(job_id);
+    if (!view) {
       return { isError: true, content: [{ type: "text", text: `No job found with id ${job_id}` }] };
     }
 
-    const view = toJobView(job);
     const cost = view.result?.parsed?.total_cost_usd;
     const summary =
       `[${view.status}] model=${view.metadata?.model ?? "?"} ` +

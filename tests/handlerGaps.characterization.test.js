@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { JobManager } from "../src/services/jobManager.js";
 import { loadConfig } from "../src/config/index.js";
 import { wireWorkspaceToEventBus } from "../src/services/workspaceEventBridge.js";
+import { createDelegationService } from "../src/services/delegationService.js";
 import { createDelegateModelsHandler } from "../src/handlers/delegateModelsHandler.js";
 import { createDelegateStatusHandler } from "../src/handlers/delegateStatusHandler.js";
 import { createDelegateHistoryHandler } from "../src/handlers/delegateHistoryHandler.js";
@@ -28,6 +29,10 @@ function newJobManager() {
   const jobManager = new JobManager({ maxConcurrent: 3 });
   wireWorkspaceToEventBus({ bus: jobManager.bus, jobManager, config, logger });
   return jobManager;
+}
+
+function newDelegationService(jobManager) {
+  return createDelegationService({ jobManager, config, logger });
 }
 
 test("delegate_models: full response shape, model list, fallbacks, efforts, and defaults", async () => {
@@ -57,7 +62,8 @@ test("delegate_models: full response shape, model list, fallbacks, efforts, and 
 
 test("delegate_status: unknown job id returns isError:true with a descriptive message, not a thrown exception", async () => {
   const jobManager = newJobManager();
-  const status = createDelegateStatusHandler({ jobManager });
+  const delegationService = newDelegationService(jobManager);
+  const status = createDelegateStatusHandler({ delegationService });
 
   const response = await status({ job_id: "does-not-exist" });
 

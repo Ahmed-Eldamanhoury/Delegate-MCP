@@ -8,6 +8,7 @@ import { FileJobStore } from "../services/fileJobStore.js";
 import { createRuntimeEventBus } from "../services/runtimeEventBus.js";
 import { wireWorkspaceToEventBus } from "../services/workspaceEventBridge.js";
 import { createObservabilityService } from "../services/observabilityService.js";
+import { createDelegationService } from "../services/delegationService.js";
 import { createEventHistoryStore } from "../services/eventHistoryStore.js";
 import { wireEventHistoryToEventBus } from "../services/eventHistoryBridge.js";
 import { createDelegateTaskHandler } from "../handlers/delegateTaskHandler.js";
@@ -134,6 +135,11 @@ export function createMcpServer({ config, logger, version }) {
 
   wireEventHistoryIfEnabled({ bus, eventHistoryStore, config });
 
+  // ADR-0010 Stage 1b: the single DelegationService instance every transport adapter's
+  // handler routes through (submit/getJob/listJobs/cancelJob) -- constructed once here and
+  // reused by every WP in this sprint that reroutes a handler (see delegationService.js).
+  const delegationService = createDelegationService({ jobManager, config, logger });
+
   server.registerTool(
     "delegate_task",
     {
@@ -165,7 +171,7 @@ export function createMcpServer({ config, logger, version }) {
       inputSchema: { job_id: JOB_ID_FIELD },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    createDelegateStatusHandler({ jobManager })
+    createDelegateStatusHandler({ delegationService })
   );
 
   server.registerTool(

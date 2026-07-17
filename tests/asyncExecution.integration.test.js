@@ -15,6 +15,7 @@ import { createDelegateCancelHandler } from "../src/handlers/delegateCancelHandl
 import { createDelegateReplayHandler } from "../src/handlers/delegateReplayHandler.js";
 import { createDelegateMetricsHandler } from "../src/handlers/delegateMetricsHandler.js";
 import { createDelegateSnapshotHandler } from "../src/handlers/delegateSnapshotHandler.js";
+import { createDelegationService } from "../src/services/delegationService.js";
 import { createRuntimeEventBus } from "../src/services/runtimeEventBus.js";
 import { createObservabilityService } from "../src/services/observabilityService.js";
 import { EVENT_TYPES } from "../src/models/runtimeEvent.js";
@@ -70,10 +71,11 @@ function buildHandlers(jobManager, service) {
   // Workspace persistence is a bus subscriber now (ADR-0002 Phase 4) — mcpServer.js wires
   // this in production; tests must wire it explicitly for each JobManager they construct.
   wireWorkspaceToEventBus({ bus: jobManager.bus, jobManager, config, logger });
+  const delegationService = createDelegationService({ jobManager, config, logger });
   return {
     task: createDelegateTaskHandler({ config, logger, jobManager, service }),
     submit: createDelegateSubmitHandler({ config, logger, jobManager, service }),
-    status: createDelegateStatusHandler({ jobManager }),
+    status: createDelegateStatusHandler({ delegationService }),
     history: createDelegateHistoryHandler({ jobManager }),
     cancel: createDelegateCancelHandler({ jobManager }),
   };
