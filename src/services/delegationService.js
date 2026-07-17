@@ -1,4 +1,6 @@
 import { createExecutionContext } from "../models/executionContext.js";
+import { DelegateTaskInputSchema } from "../models/schemas.js";
+import { toJobView, summarizeJob } from "../models/job.js";
 import * as defaultClaudeCliService from "./claudeCliService.js";
 import * as defaultWorkspaceManager from "./workspaceManager.js";
 
@@ -43,4 +45,56 @@ export function submitDelegation({
   workspace.createJobWorkspace(jobId, context, config, logger);
 
   return jobId;
+}
+
+/**
+ * The write-side counterpart to `ObservabilityService`: the single object every transport
+ * adapter calls to submit, query, list, or cancel a job (`ADR-0010` Stage 1b,
+ * `STAGE_1B_DESIGN_PACKAGE.md` §1). Additive alongside `submitDelegation()` above — WP1 adds
+ * this factory without touching that function or its callers
+ * (`delegateSubmitHandler.js`/`delegateTaskHandler.js`); those are rerouted in later work
+ * packages.
+ *
+ * `submit()`'s body is `submitDelegation()` verbatim (including its `service`/`workspace`
+ * defaults, which production relies on — see `submitDelegation()`'s own doc comment) plus one
+ * new line: `DelegateTaskInputSchema.parse(input)`, which throws an uncaught `ZodError` on
+ * invalid input. `getJob()`/`listJobs()` return already-shaped `JobView`/`JobSummary` objects
+ * (via `toJobView`/`summarizeJob`), never a raw `Job`. `listJobs()`'s `limit = 20` default is a
+ * deliberate, disclosed addition not present in today's bare `delegateHistoryHandler.js` — see
+ * `STAGE_1B_DESIGN_PACKAGE.md` §1/§4/§5 for the full disclosure and its non-breaking rationale
+ * for the one consumer (MCP) that exists today.
+ * @param {{jobManager: import("./jobManager.js").JobManager, config: import("../config/index.js").DelegateConfig, logger?: object, service?: typeof defaultClaudeCliService, workspace?: typeof defaultWorkspaceManager}} args
+ */
+export function createDelegationService({
+  jobManager,
+  config,
+  logger,
+  service = defaultClaudeCliService,
+  workspace = defaultWorkspaceManager,
+}) {
+  return Object.freeze({
+    submit(input, toolName) {
+      DelegateTaskInputSchema.parse(input);
+      const context = createExecutionContext(input, config);
+      const jobId = jobManager.submit(
+        (signal, markRunning, jobId) =>
+          service.invoke(input.prompt, context, config, { signal, onSpawn: markRunning, bus: jobManager.bus, jobId }),
+        { tool: toolName, ...context.metadata }
+      );
+      workspace.createJobWorkspace(jobId, context, config, logger);
+      return jobId;
+    },
+    getJob(jobId) {
+      const job = jobManager.getJob(jobId);
+      return job ? toJobView(job) : undefined;
+    },
+    listJobs({ status, limit = 20 } = {}) {
+      let jobs = jobManager.listJobs();
+      if (status) jobs = jobs.filter((j) => j.status === status);
+      return jobs.slice(-limit).reverse().map(summarizeJob);
+    },
+    cancelJob(jobId) {
+      return jobManager.cancelJob(jobId);
+    },
+  });
 }
