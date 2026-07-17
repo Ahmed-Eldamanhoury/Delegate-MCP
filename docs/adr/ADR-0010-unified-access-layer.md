@@ -55,9 +55,13 @@ not any missing feature, is what this ADR resolves.
 Governing documents this ADR must remain compatible with, cited by name throughout:
 `docs/FOUNDATION_FREEZE.md` (frozen MCP tool schemas and execution contract — a future access
 layer must not force any change here), `docs/OBSERVABILITY_FREEZE.md` (frozen
-`ObservabilityService` method set), `CAPABILITY_ROADMAP_REBASELINE.md` (already recommends this
-unified-layer wave over a REST-only design), and `ADR-0007`/`ADR-0008`/`ADR-0009` (the three
-MCP-native thin-wrapper precedents this ADR extends to the write side).
+`ObservabilityService` method set), `ADR-0002` (frozen `RuntimeEventBus` event schema, including
+the `JobQueued` payload shape `{tool, model, effort, metadata}` — a future breaking change to any
+payload shape bumps `EVENT_SCHEMA_VERSION`, per that ADR's own versioning rule, exactly the
+discipline this ADR must also honor for anything touching event payloads),
+`CAPABILITY_ROADMAP_REBASELINE.md` (already recommends this unified-layer wave over a REST-only
+design), and `ADR-0007`/`ADR-0008`/`ADR-0009` (the three MCP-native thin-wrapper precedents this
+ADR extends to the write side).
 
 ## Decision (summary)
 
@@ -109,9 +113,16 @@ The following six subsections answer this ADR's required questions explicitly.
   Wraps exactly four operations: `submit`, `getJob`, `listJobs`, `cancelJob`. It deliberately
   does **not** wrap `waitForCompletion`, `jobManager.bus`, or `forwardJobProgressToMcp` — see §4
   for why each stays where it is.
-- **`JobManager`** and **`ObservabilityService`'s substrate** (`MetricsCollector`,
-  `TimelineStore`, `ReplayEngine`, `SnapshotBuilder`, `ConsumerRegistry`) remain internal,
-  never imported directly by any transport adapter, mirroring the existing rule.
+- **`ObservabilityService`'s substrate** (`MetricsCollector`, `TimelineStore`, `ReplayEngine`,
+  `SnapshotBuilder`, `ConsumerRegistry`) remains internal, never imported directly by any
+  transport adapter, mirroring the existing rule, with no exception.
+- **`JobManager`** remains internal to every transport adapter **except** `delegateTaskHandler.js`,
+  which keeps a direct `jobManager` reference alongside `delegationService` for
+  `waitForCompletion`/`bus` only — a single, deliberate, documented exception (see §4), not a
+  contradiction of this rule. No other transport adapter (present or future) gets this exception;
+  `delegateStatusHandler.js`/`delegateHistoryHandler.js`/`delegateCancelHandler.js`/
+  `delegateSubmitHandler.js` and any future REST/Dashboard/Plugin adapter reach `JobManager` only
+  through `DelegationService`.
 
 ## 2. Which request/response contracts become transport-independent
 
@@ -143,15 +154,26 @@ research passes; neither is left unresolved here):
 - **`job.metadata.tool` naming.** Today `submitDelegation()` stores `{tool: toolName, ...}` into
   `job.metadata`, and `JobManager.submit()` echoes it into the `JobQueued` event payload
   (`payload: {tool: metadata.tool ?? null, ...}`). `tool` is an MCP-flavored label for what is
-  really generic submission provenance. Confirmed by search: this field name is not referenced
-  in any frozen contract table in `FOUNDATION_FREEZE.md` or `OBSERVABILITY_FREEZE.md` — it is
-  caller-supplied job metadata (`job.js`'s own typedef: *"caller-supplied context (e.g. tool
-  name, input)"*), not a frozen response field. **Decision: rename to `source`** —
-  `DelegationService.submit(input, source)` stores `metadata.source` and `JobManager.submit()`'s
-  `JobQueued` payload changes `payload.tool` → `payload.source` to match. This is an internal
-  rename with no MCP schema impact (§ Compatibility impact classifies it as **patch**), done once
-  now while only one caller pattern (`toolName: "delegate_task"` / `"delegate_submit"`) exists,
-  rather than compounding the asymmetry once a REST caller with no "tool name" arrives.
+  really generic submission provenance, and it is not referenced in any frozen contract table in
+  `FOUNDATION_FREEZE.md` or `OBSERVABILITY_FREEZE.md`. **However**, unlike those two documents,
+  `ADR-0002` *does* freeze this exact shape: its Event contract table lists `JobQueued`'s payload
+  as `{ tool, model, effort, metadata }` verbatim, and that ADR's own rule is explicit — *"a
+  future breaking change to any payload shape bumps [`EVENT_SCHEMA_VERSION`], per the same
+  breaking-change discipline `FOUNDATION_FREEZE.md` already applies to MCP schemas."* Renaming
+  `payload.tool` → `payload.source` (and the mirrored `metadata.tool` → `metadata.source`) is
+  exactly such a payload-shape change to a frozen event type, not an unconstrained internal
+  detail — confirmed observably breaking, not byte-identical, by the existing tests that already
+  construct jobs on this exact key (`tests/fileJobStore.test.js:23`,
+  `tests/workspaceManager.test.js:76` and `:98`, each passing `{tool: "delegate_task"}` /
+  `{tool: "delegate_submit"}` as `metadata`). **Decision: do *not* rename this field in this ADR.**
+  `DelegationService.submit(input, toolName)` keeps storing `metadata.tool` and `JobManager.
+  submit()`'s `JobQueued` payload keeps `payload.tool`, unchanged, so `EVENT_SCHEMA_VERSION` stays
+  at `1` and Stage 1b's "byte-identical behavior" and **patch** classification both hold without
+  qualification. The generic-naming observation is real but is exactly the kind of speculative
+  improvement this ADR already declines to make ahead of a concrete need elsewhere (see §4's
+  `subscribeToJob()` reasoning): if a future caller genuinely needs a non-tool-shaped provenance
+  label, that is its own ADR, done explicitly alongside an `ADR-0002` amendment and an
+  `EVENT_SCHEMA_VERSION` bump — not folded silently into this one's patch-classified refactor.
 
 ## 3. Which responsibilities belong to transport adapters
 
@@ -269,7 +291,7 @@ all of them import the same backend logic:
 |---|---|---|---|
 | Get job status | `delegateStatusHandler` → `delegationService.getJob(id)` → `toJobView` → MCP envelope | `GET /jobs/:id` → `delegationService.getJob(id)` → `toJobView` → JSON body | Same call, in-process or via REST, → rendered view |
 | List jobs | `delegateHistoryHandler` → `delegationService.listJobs({status,limit})` → `summarizeJob` | `GET /jobs?status=&limit=` → identical call → JSON array | Same |
-| Submit job | `delegateSubmitHandler`/`delegateTaskHandler` → `delegationService.submit(input, source)` | `POST /jobs` → identical call, but never blocks the request thread the way `delegate_task` does — polls or streams instead | Same, via REST |
+| Submit job | `delegateSubmitHandler`/`delegateTaskHandler` → `delegationService.submit(input, toolName)` | `POST /jobs` → identical call, but never blocks the request thread the way `delegate_task` does — polls or streams instead | Same, via REST |
 | Cancel job | `delegateCancelHandler` → `delegationService.cancelJob(id)` | `DELETE /jobs/:id` → identical call | Same |
 | Metrics/snapshot/replay | `delegate_metrics`/`delegate_snapshot`/`delegate_replay` → `observabilityService.*` | `GET /metrics`, `GET /snapshot`, `GET /jobs/:id/replay` → identical calls | Same, polled |
 
@@ -327,8 +349,9 @@ which `FOUNDATION_FREEZE.md`'s own policy classifies as minor regardless of inte
 implementation cost). Stage 1b adds no new tool, no new schema field, no new response shape — it
 is purely an internal dependency-injection change, exactly `FOUNDATION_FREEZE.md`'s own
 definition of patch: *"internal fix, doc correction, dead-code removal, non-behavioral
-refactor."* The `metadata.tool` → `metadata.source` rename (§2) ships in this same patch, also
-non-breaking per the same reasoning.
+refactor."* `metadata.tool`/`payload.tool` are **not** renamed as part of this stage (§2 reverses
+that earlier proposal) — `EVENT_SCHEMA_VERSION` stays at `1`, so nothing in this stage touches
+`ADR-0002`'s frozen event contract, and the patch classification holds without exception.
 
 **Stage 2 — REST API Foundation ADR + build.** A thin HTTP adapter mapping 1:1 onto
 `ObservabilityService` (proven three times over) and `DelegationService` (freshly proven in
@@ -367,6 +390,10 @@ completion` discipline (evidence before assertions).
   by this ADR.
 - `delegate_timeline`, `delegate_search` — reconfirmed rejected/deferred
   (`CAPABILITY_ROADMAP_REBASELINE.md`), unchanged by this ADR.
+- Renaming `job.metadata.tool`/`JobQueued`'s `payload.tool` to a more generic name (e.g.
+  `source`) — reversed out of this ADR (§2) once checked against `ADR-0002`'s frozen Event
+  contract table; would require its own ADR amending `ADR-0002` and bumping
+  `EVENT_SCHEMA_VERSION`, deferred until a concrete second caller pattern needs it.
 - Any change to `ObservabilityService`, `MetricsCollector`, `TimelineStore`, `ReplayEngine`,
   `SnapshotBuilder`, or their frozen contracts.
 - Building REST directly against `JobManager`/`ObservabilityService` while deferring the
@@ -392,6 +419,12 @@ completion` discipline (evidence before assertions).
   review/testing effort required.
 - **Build Dashboard colocated in-process over the services, skipping REST**: rejected (§6,
   Stage 3) — reintroduces a redundant parallel path one layer up.
+- **Rename `metadata.tool`/`payload.tool` → `.source` as part of this ADR's patch-classified
+  Stage 1b** (an earlier draft of this ADR proposed exactly this): rejected on reconsideration
+  (§2) — `ADR-0002` freezes this exact `JobQueued` payload shape and requires an
+  `EVENT_SCHEMA_VERSION` bump for any breaking change to it; bundling an unversioned rename into a
+  stage classified as **patch** would silently violate that frozen ADR's own rule and falsify the
+  "byte-identical" claim against Stage 1a's characterization tests.
 
 ## Compatibility impact
 
@@ -403,9 +436,11 @@ completion` discipline (evidence before assertions).
   done via this ADR, per that document's own breaking-change policy ("no entry ... changes
   without an ADR documenting why"). The underlying guarantee — one single path, same sync/async
   response shapes — is preserved, not broken.
-- `job.metadata.tool` → `job.metadata.source` rename (§2) and the matching `JobQueued` event
-  payload field rename: internal, not referenced in any frozen contract table in either freeze
-  document (confirmed by search); non-breaking per both documents' own versioning policies.
+- `job.metadata.tool` / the `JobQueued` event's `payload.tool`: **unchanged** (§2 reverses the
+  earlier rename proposal once `ADR-0002`'s frozen Event contract table and
+  `EVENT_SCHEMA_VERSION` rule were checked — this field *is* part of a frozen contract, just not
+  one of the two freeze documents this ADR checked first). `EVENT_SCHEMA_VERSION` stays at `1`;
+  zero impact on `ADR-0002`.
 - `ADR-0003`'s "Components"/"Dependency Direction" sections get a corrective note about
   `getJobSummary()` (§1) — a doc-accuracy fix, not a contract change.
 - Overall classification: **patch**, per `FOUNDATION_FREEZE.md`'s own versioning policy (§6).
