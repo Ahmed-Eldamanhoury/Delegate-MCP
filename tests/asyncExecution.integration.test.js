@@ -77,7 +77,7 @@ function buildHandlers(jobManager, service) {
     submit: createDelegateSubmitHandler({ config, logger, jobManager, service }),
     status: createDelegateStatusHandler({ delegationService }),
     history: createDelegateHistoryHandler({ delegationService }),
-    cancel: createDelegateCancelHandler({ jobManager }),
+    cancel: createDelegateCancelHandler({ delegationService }),
   };
 }
 

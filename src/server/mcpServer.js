@@ -223,7 +223,7 @@ export function createMcpServer({ config, logger, version }) {
       inputSchema: { job_id: JOB_ID_FIELD },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
-    createDelegateCancelHandler({ jobManager })
+    createDelegateCancelHandler({ delegationService })
   );
 
   server.registerTool(

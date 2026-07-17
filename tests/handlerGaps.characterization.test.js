@@ -74,7 +74,8 @@ test("delegate_status: unknown job id returns isError:true with a descriptive me
 
 test("delegate_cancel: unknown job id returns isError:true with a descriptive message", async () => {
   const jobManager = newJobManager();
-  const cancel = createDelegateCancelHandler({ jobManager });
+  const delegationService = newDelegationService(jobManager);
+  const cancel = createDelegateCancelHandler({ delegationService });
 
   const response = await cancel({ job_id: "does-not-exist" });
 
@@ -84,7 +85,8 @@ test("delegate_cancel: unknown job id returns isError:true with a descriptive me
 
 test("delegate_cancel: an already-terminal job's error message names its actual status", async () => {
   const jobManager = newJobManager();
-  const cancel = createDelegateCancelHandler({ jobManager });
+  const delegationService = newDelegationService(jobManager);
+  const cancel = createDelegateCancelHandler({ delegationService });
   const jobId = jobManager.submit(delayTask(5, "done"));
   await waitUntil(() => jobManager.getJob(jobId).status === "completed");
 
@@ -98,7 +100,7 @@ test("delegate_history: status filter returns only jobs matching that exact stat
   const jobManager = newJobManager();
   const delegationService = newDelegationService(jobManager);
   const history = createDelegateHistoryHandler({ delegationService });
-  const cancel = createDelegateCancelHandler({ jobManager });
+  const cancel = createDelegateCancelHandler({ delegationService });
 
   const completedId = jobManager.submit(delayTask(5, "ok"));
   const toCancelId = jobManager.submit(delayTask(5000, "slow"));
