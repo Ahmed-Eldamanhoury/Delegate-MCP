@@ -11,9 +11,17 @@ written, in this document or this sprint.** Gated for review before any implemen
 
 Everything ADR-0011 decided and left to "implementation time":
 
-- `createDelegationBackend({config, logger})` — extracting `createMcpServer`'s inline construction
-  block (`jobManager`/`bus`/`observabilityService`/`delegationService`/`eventHistoryStore`) into a
-  shared, transport-agnostic helper (ADR-0011, Compatibility with existing MCP transport).
+- **`createDelegationBackend({config, logger})`** — extracting `createMcpServer`'s inline
+  construction block (`jobManager`/`bus`/`observabilityService`/`delegationService`/
+  `eventHistoryStore`) into a shared, transport-agnostic helper (ADR-0011, Compatibility with
+  existing MCP transport). **File location, pinned explicitly here** — ADR-0011's own "Recommended
+  next step" tasks this document with fixing exactly this, and an independent review of an earlier
+  draft correctly found it left unpinned: `src/services/delegationBackend.js`, a new sibling file
+  next to `delegationService.js`/`observabilityService.js`/`jobManager.js` (matching this
+  directory's one-file-per-concern convention) — **deliberately not inside `delegationService.js`
+  itself**, so WP0 (which creates this file) and WP1 (which edits `delegationService.js` for the
+  `isValidJobId()` guard) touch genuinely disjoint files, making the "zero file overlap" claim in
+  §3 actually true rather than merely asserted.
 - `src/cli/restEntry.js` — a new, standalone entry point; never a flag on `entry.js`.
 - The REST HTTP layer itself: route registration, auth middleware, CORS policy, request body-size
   enforcement, HTTP status-code/error mapping, path/query-param parsing — all thin, all calling
@@ -48,12 +56,12 @@ Reused verbatim from ADR-0011 — **not reopened, not partially built, not "star
 
 | WP | Content | Depends on | Parallelizable with |
 |---|---|---|---|
-| **WP0** | `createDelegationBackend()` extraction refactor. Behavior-preserving only — `createMcpServer()` calls the new helper instead of inlining construction; zero observable change to any MCP tool. | none | WP1 |
-| **WP1** | Pure, unit-testable adapter primitives, no live server needed: HTTP status-code/error mapper; auth-check predicate; path/query-param parsers; request body-size-limit check; the `isValidJobId()` guard added to `DelegationService`. | none | WP0 |
+| **WP0** | `createDelegationBackend()` extraction refactor, in new file `src/services/delegationBackend.js` (see §1). Behavior-preserving only — `createMcpServer()` calls the new helper instead of inlining construction; zero observable change to any MCP tool. | none | WP1 (genuinely disjoint files: `delegationBackend.js` (new) vs. `delegationService.js`) |
+| **WP1** | Pure, unit-testable adapter primitives, no live server needed: HTTP status-code/error mapper; auth-check predicate; path/query-param parsers; request body-size-limit check; the `isValidJobId()` guard added to `DelegationService` (`delegationService.js`). | none | WP0 (see file-disjointness note above) |
 | **WP2** | `restEntry.js` skeleton: HTTP server bootstrap (127.0.0.1 default bind, configurable port), wiring WP0's backend + WP1's primitives (auth middleware, CORS default-deny, body-size enforcement, error mapping), plus the full graceful-shutdown sequence. **No routes registered yet.** | WP0, WP1 | — |
-| **WP3** | Read-only routes: `GET /v1/jobs/:id`, `GET /v1/jobs`, `GET /v1/metrics`, `GET /v1/snapshot`, `GET /v1/jobs/:id/replay`, `GET /v1/jobs/:id/timeline`, `GET /v1/models` (the last needs the shared `buildModelsInfo(config)` helper extracted from `delegateModelsHandler.js`, per ADR-0011 §"REST lifecycle"). Each route written test-first (see Testing obligations). | WP2 | WP4 |
-| **WP4** | Write routes: `POST /v1/jobs` (202 + `Location`), `DELETE /v1/jobs/:id` (with the before/cancel/after idempotency logic). Each route written test-first. | WP2 | WP3 |
-| **WP5** | Cross-cutting test suite: the contract-test file (`tests/restRoutes.contract.test.js`), the required malformed-id regression test, the required MCP+REST-same-`JobManager` divergence-proof integration test, the body-size test, the shutdown-behavior test. Individual route/unit tests are written test-first *within* WP0–WP4; WP5 is the suite-level tests that need the full route set assembled. | WP3, WP4 | — |
+| **WP3** | Read-only routes: `GET /v1/jobs/:id`, `GET /v1/jobs`, `GET /v1/metrics`, `GET /v1/snapshot`, `GET /v1/jobs/:id/replay`, `GET /v1/jobs/:id/timeline`, `GET /v1/models` (the last needs the shared `buildModelsInfo(config)` helper extracted from `delegateModelsHandler.js`, per ADR-0011 §"REST lifecycle"). Each route written test-first (see Testing obligations). | WP2 | WP4 — *but see R8: recommended sequential-in-one-worktree, not isolated parallel, since both touch `restEntry.js`'s shared route-registration call site* |
+| **WP4** | Write routes: `POST /v1/jobs` (202 + `Location`), `DELETE /v1/jobs/:id` (with the before/cancel/after idempotency logic). Each route written test-first. | WP2 | WP3 — *same R8 caveat* |
+| **WP5** | Cross-cutting test suite: the contract-test file (`tests/restRoutes.contract.test.js`), the required MCP+REST-same-`JobManager` divergence-proof integration test, a second required test proving two *independent* `createDelegationBackend()` instances (mirroring real `entry.js` + `restEntry.js`) share no module-level state, the body-size test, the shutdown-behavior test. Individual route/unit tests are written test-first *within* WP0–WP4; WP5 is the suite-level tests that need the full route set assembled. **Exception**: the malformed-id regression test (§7) needs only WP1's guard plus the *existing* MCP handlers — it does not need any REST route and should start as soon as WP1 lands, in parallel with WP2/WP3/WP4, not held behind this gate. | WP3, WP4 (except the malformed-id test, see above) | — |
 | **WP6** | Documentation: `docs/REST_FREEZE.md` (full — see ADR-0011's planned outline), `CHANGELOG.md` entry, `docs/ARCHITECTURE.md` (add `src/rest/`/`restEntry.js` to the file/directory diagram), `docs/releases/KNOWN_LIMITATIONS.md` (metrics/snapshot process-scoping, the body-size MCP/REST divergence, ungraceful-shutdown platform limits — all already named in ADR-0011, now documented as shipped-and-known, not hypothetical), `package.json` version bump. | WP3, WP4, WP5 | — |
 | **WP7** | Final certification gate (see Release gates). | WP0–WP6 | — |
 
@@ -79,8 +87,8 @@ the full route set from `WP3`+`WP4`) → `WP6` → `WP7`.
   shape; every route calls exactly one `DelegationService`/`ObservabilityService` method with no
   additional logic (spot-checked, not just asserted).
 - **WP5**: the malformed-id regression test passes showing byte-identical MCP output before/after;
-  the single-`JobManager`-two-transports test passes; the body-size and shutdown-behavior tests
-  pass exactly as specified in ADR-0011.
+  the shared-instance parity test and the independent-instance isolation test (§7) both pass; the
+  body-size and shutdown-behavior tests pass exactly as specified in ADR-0011.
 - **WP6**: `docs/REST_FREEZE.md` exists and its frozen route table matches WP3/WP4's actual,
   contract-tested shapes exactly (no aspirational content); `CHANGELOG.md`/`ARCHITECTURE.md`/
   `KNOWN_LIMITATIONS.md` all reference the real, shipped route table, not a draft one.
@@ -97,8 +105,13 @@ Safe points to pause, ship a partial PR, or stop entirely without leaving the re
 3. **After WP2**: safe but **not yet useful** — a REST server that accepts connections and enforces
    auth/CORS/body-limits/shutdown but has zero functional routes. Fine to ship/merge as its own PR;
    REST is still not usable by any real caller.
-4. **After WP3 or WP4 individually**: safe — read-only and write routes are independent; either can
-   ship alone (e.g., ship WP3 first for a read-only REST preview, defer WP4).
+4. **After WP3 or WP4 individually**: safe **to merge**, not yet operator-ready either way — an
+   independent review correctly flagged that "ship" here must mean "mergeable to `main`," not
+   "usable by a real operator": WP5's body-size test needs `POST /v1/jobs` (WP4), so merging WP3
+   alone leaves that specific proof outstanding, and neither WP3-only nor WP4-only reaches WP7's
+   certification bar. Merging either individually is safe (zero MCP regression, per each WP's own
+   acceptance criteria) but does not constitute a usable "REST preview" until WP5 proves the full
+   set.
 5. **After WP5**: REST is functionally complete and empirically proven non-regressive to MCP, but
    undocumented (`REST_FREEZE.md` doesn't exist yet) — do not tag/release from this checkpoint.
 6. **After WP6**: fully documented, ready for WP7's certification gate.
@@ -126,7 +139,14 @@ this plan itself introduces:
 Directly enumerating ADR-0011's own Testing Strategy, mapped to WPs, plus the three
 specifically-named required tests from the ADR's revision history:
 
-- **Unit** (WP1): status-code mapper, auth predicate, path/query parsers, body-size check,
+- **Unit** (WP0, WP1): `createDelegationBackend()` itself, in isolation — asserting it returns the
+  expected `{jobManager, bus, observabilityService, delegationService, eventHistoryStore}` shape
+  and that calling it twice in one process (mirroring `entry.js` + `restEntry.js` each calling it
+  independently) produces two fully independent instances sharing no module-level state — an
+  independent review correctly found this wasn't required anywhere in an earlier draft, even
+  though `runtimeEventBus.js`/`jobManager.js` are confirmed to hold only instance-level state today
+  (verified by direct read), making this a regression guard for the future, not a currently-known
+  bug. Plus: status-code mapper, auth predicate, path/query parsers, body-size check,
   `isValidJobId()` guard — each a pure-function test, no live server.
 - **Integration** (WP3/WP4/WP5): full lifecycles via real `fetch()` against a real, ephemeral-port
   REST listener wired to real `DelegationService`/`ObservabilityService` (never a mocked service) —
@@ -142,13 +162,20 @@ specifically-named required tests from the ADR's revision history:
 - **Security** (WP5): auth required/rejected on every route (missing and wrong credential); path-
   traversal attempt on `:id`; CORS preflight default-deny; credential/secret non-leakage in error
   bodies and logs; default-bind-address test; body-size-limit applies regardless of auth state.
-- **Three non-negotiable, explicitly-named regression/proof tests** (all from ADR-0011's own
-  revision history — these are acceptance gates, not optional coverage):
+- **Four non-negotiable, explicitly-named regression/proof tests** (three from ADR-0011's own
+  revision history, one added by this package's own adversarial review — these are acceptance
+  gates, not optional coverage):
   1. Malformed-job-id regression test: MCP's exact output for a non-UUID id, captured *before* the
      `isValidJobId()` guard lands, re-asserted byte-identical *after*.
-  2. Single-`JobManager`-two-transports test: one instance wired to both an MCP handler call and a
-     REST HTTP call, asserting identical observed job state.
-  3. Shutdown-behavior test: `SIGTERM` with a long-running stub job, asserting new-connections-
+  2. Shared-instance parity test: **one** `createDelegationBackend()` instance wired to both an MCP
+     handler call and a REST HTTP call, asserting identical observed job state — proves the "same
+     backend, two transports" claim.
+  3. Independent-instance isolation test (new, §7 Unit) — the deliberate opposite case: **two
+     separate** `createDelegationBackend()` calls in one process (mirroring real `entry.js` +
+     `restEntry.js`, which never share an instance in production), asserting neither's state leaks
+     into the other. Test 2 proves parity is *possible* when explicitly wired that way; test 3
+     proves it never happens *by accident* the rest of the time.
+  4. Shutdown-behavior test: `SIGTERM` with a long-running stub job, asserting new-connections-
      refused-immediately, force-cancel-only-after-grace-period, and bounded exit time.
 
 ## 8. Documentation Obligations
@@ -211,7 +238,7 @@ closing the exact gap an independent review found in that earlier sprint):
    (zero schema drift) — checked live, not only via the existing characterization test passing.
 3. A live boot of `restEntry.js`, driven by a real HTTP client, confirming the actual route
    responses match `docs/REST_FREEZE.md`'s frozen table exactly.
-4. The three non-negotiable regression/proof tests (§7) passing, with their assertions read and
+4. The four non-negotiable regression/proof tests (§7) passing, with their assertions read and
    confirmed by the certifying reviewer, not just their exit code.
 5. Independent adversarial review (see below) passing clean.
 6. `docs/REST_FREEZE.md`, `CHANGELOG.md`, `docs/ARCHITECTURE.md`, `docs/releases/
