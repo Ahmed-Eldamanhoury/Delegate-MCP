@@ -1,0 +1,30 @@
+claude-delegate-mcp
+Copyright 2026 Delegate-MCP
+
+This product is licensed under the Apache License, Version 2.0.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+This product includes software developed at and by:
+  https://github.com/Ahmed-Eldamanhoury/Delegate-MCP
+
+-------------------------------------------------------------------------------
+
+This product includes third-party software components, each distributed
+under their respective licenses:
+
+@modelcontextprotocol/sdk
+  License: MIT
+  https://github.com/modelcontextprotocol/typescript-sdk
+
+zod
+  License: MIT
+  https://github.com/colinhacks/zod
+
+All other transitive dependencies are distributed under MIT, BSD-2-Clause,
+BSD-3-Clause, or ISC licenses, all of which are compatible with and
+permissive relative to the Apache License, Version 2.0.
+
+Copies of all dependency licenses can be found in the node_modules/
+subdirectory of this distribution.

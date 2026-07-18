@@ -31,7 +31,7 @@
   "bugs": {
     "url": "https://github.com/Ahmed-Eldamanhoury/Delegate-MCP/issues"
   },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "author": "Delegate-MCP",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

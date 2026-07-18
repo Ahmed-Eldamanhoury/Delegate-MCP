@@ -6,7 +6,7 @@ issue, please report it privately (see below) rather than filing a public issue.
 
 ## Supported versions
 
-Only the latest version on `master` is supported. There is no LTS/backport policy.
+Only the latest version on `main` is supported. There is no LTS/backport policy.
 
 ## Security model (evidence, not aspiration — see linked docs for detail)
 

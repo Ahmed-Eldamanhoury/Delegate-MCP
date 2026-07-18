@@ -369,7 +369,7 @@ npx @modelcontextprotocol/inspector --cli node server.js --method tools/list
 
 ## Project info
 
-- **License**: [MIT](LICENSE)
+- **License**: [Apache-2.0](LICENSE)
 - **Contributing**: [CONTRIBUTING.md](CONTRIBUTING.md)
 - **Support**: [SUPPORT.md](SUPPORT.md)
 - **Security**: [SECURITY.md](SECURITY.md)

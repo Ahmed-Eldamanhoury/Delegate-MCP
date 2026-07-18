@@ -24,7 +24,12 @@ welcome via pull request, but note there is currently no CI configured — revie
 4. Open a pull request. Keep it scoped — this project has deliberately avoided speculative
    abstractions and premature generalization; new code should follow that same discipline.
 
+## License
+
+By submitting a pull request you agree that your contribution is licensed under the
+[Apache License, Version 2.0](LICENSE) — the same license as this project.
+
 ## Reporting bugs / requesting features
 
-Open a [GitHub issue](https://github.com/Ahmed-Eldamanhoury/Delegate-MCP/issues). For security
-issues, see [SECURITY.md](SECURITY.md) instead — do not open a public issue for those.
+Use the GitHub [issue templates](https://github.com/Ahmed-Eldamanhoury/Delegate-MCP/issues/new/choose).
+For security issues, see [SECURITY.md](SECURITY.md) instead — do not open a public issue for those.

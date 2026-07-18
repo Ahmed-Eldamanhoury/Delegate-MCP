@@ -13,6 +13,8 @@
 - [ ] If this touches a frozen contract (9 MCP tools' schemas, job lifecycle,
       `ExecutionContext`, `RuntimeEventBus`, `ObservabilityService`'s public methods) — this PR
       explains why, and references the relevant ADR/freeze doc
+- [ ] No new REST endpoints — REST contract is frozen at [`docs/REST_FREEZE.md`](../docs/REST_FREEZE.md)
+- [ ] No `innerHTML` / `dangerouslySetInnerHTML` in `dashboard/src/` — RC6 security invariant
 - [ ] No new hardcoded local paths, usernames, or secrets introduced
 
 ## Anything else reviewers should know?
