@@ -1,14 +1,31 @@
 # Architecture
 
-Nine MCP tools split by concern so each piece is independently testable.
+Nine MCP tools split by concern so each piece is independently testable. As of `ADR-0011`, a
+second, entirely opt-in transport (REST) sits alongside MCP, calling the same two internal
+services — see "REST API" below.
 
 ```
 server.js               backward-compat entrypoint (claude_desktop_config.json points here)
 src/
-  cli/entry.js           boot sequence: load config, validate, health check, start server, graceful shutdown
-  server/mcpServer.js     builds the McpServer instance, owns the shared JobManager, registers all 9 tools
+  cli/entry.js           MCP boot sequence: load config, validate, health check, start server, graceful shutdown
+  cli/restEntry.js        REST boot sequence (ADR-0011) -- standalone process, never a flag on entry.js;
+                             main(), buildRouteTable(), registerRestShutdownHandlers()
+  server/mcpServer.js     builds the McpServer instance, calls createDelegationBackend(), registers all 9 tools
   server/health.js        non-blocking check that the configured claude binary exists
   handlers/                one file per tool: MCP-shaped request/response formatting
+  rest/                    REST HTTP layer (ADR-0011) -- see "REST API" below for the full contract
+    restServer.js            createRestServer(): request pipeline (body-limit -> auth -> route match -> handler -> error mapping -> response)
+    router.js                pure :id-param path matcher, no I/O
+    auth.js                   bearer-token check (pure) + token generation/persistence (side-effecting, called once at boot)
+    bodyLimit.js              Content-Length pre-check (every route) + streaming bound (scoped to POST /v1/jobs only)
+    errors.js                 unified {status, body} error mapping -- REST's toToolErrorContent() analog
+    parsing.js                query-param validation (status/limit/type/since); :id is deliberately never validated here
+    routes/jobs.js             POST /v1/jobs, GET /v1/jobs/:id, GET /v1/jobs, DELETE /v1/jobs/:id
+    routes/observability.js    GET /v1/jobs/:id/replay, /timeline, /v1/metrics, /v1/snapshot
+    routes/models.js           GET /v1/models
+  services/delegationBackend.js  createDelegationBackend() (ADR-0011): the transport-agnostic construction
+                                    (JobManager/bus/ObservabilityService/DelegationService/EventHistoryStore)
+                                    both mcpServer.js and restEntry.js call independently -- zero shared state
   services/delegationService.js  DelegationService (ADR-0010): submit/getJob/listJobs/cancelJob --
                                     the single write-side path every handler routes through;
                                     submit() builds an ExecutionContext, calls jobManager.submit(),
@@ -252,9 +269,50 @@ execution.
   consumer too: the `delegate_metrics` MCP tool ([ADR-0008](adr/ADR-0008-mcp-metrics-access.md)),
   an equally thin wrapper. `getSnapshot()` now has its own external consumer too: the
   `delegate_snapshot` MCP tool ([ADR-0009](adr/ADR-0009-mcp-snapshot-access.md)), an equally
-  thin wrapper. Every other method (`getTimeline()`/`ConsumerRegistry`) is still not exposed
-  via any MCP tool — Dashboard/REST API/plugin/future-MCP-tool consumption of those remains
-  future work. Frozen public contracts: [OBSERVABILITY_FREEZE.md](OBSERVABILITY_FREEZE.md).
+  thin wrapper. As of `ADR-0011`, REST now calls `replay()`/`getMetrics()`/`getSnapshot()` too
+  (a second, independent set of thin transport adapters — see "REST API" below), and
+  `getTimeline()` gets its **first ever** consumer, REST-only (`GET /v1/jobs/:id/timeline` — no
+  MCP tool mirrors it). `ConsumerRegistry` remains the one piece of this surface still exposed
+  to nothing — deliberately deferred to Stage 3 (Dashboard), not wired into REST v1 (`ADR-0011`
+  §"Open decisions"). Frozen public contracts: [OBSERVABILITY_FREEZE.md](OBSERVABILITY_FREEZE.md).
+
+## REST API
+
+See [ADR-0011](adr/ADR-0011-rest-api-foundation.md) for the full design and
+[REST_FREEZE.md](REST_FREEZE.md) for the frozen HTTP contract (route table, error model, auth,
+bind defaults). Summary: REST is a **third transport**, sitting on top of the exact same two
+services every MCP handler already calls — zero new business logic, zero MCP schema impact.
+
+- **Entirely opt-in, its own process.** `src/cli/restEntry.js` is a standalone entry point,
+  never a flag on the existing stdio `src/cli/entry.js`, never reachable from stdio's boot
+  path. An MCP-only deployment that never runs `restEntry.js` is unaffected by any of this.
+- **`createDelegationBackend()`** (`src/services/delegationBackend.js`) is the shared
+  construction both transports call independently — the Extract-Function refactor of what used
+  to be inlined in `mcpServer.js`'s `createMcpServer()`. `mcpServer.js` and `restEntry.js` each
+  get their own fully independent `JobManager`/`bus`/`ObservabilityService`/`DelegationService`
+  — REST and any given MCP stdio session are **operationally separate job universes** by
+  default (see `REST_FREEZE.md`'s Compatibility guarantees for exactly what `jobStore=file`
+  does and doesn't share).
+  `restEntry.js` also builds the real route table (`buildRouteTable()`), assembling all three
+  route factories (`routes/jobs.js`/`routes/observability.js`/`routes/models.js`) into one plain
+  array literal — mirroring `mcpServer.js`'s own precedent of inlining all 9 `registerTool()`
+  calls in one place, no separate route-table file.
+- **The request pipeline** (`src/rest/restServer.js`) is a fixed, ordered sequence for every
+  request: body-size `Content-Length` gate → bearer-token auth → route match → handler →
+  error mapping → response. Auth runs before route matching deliberately (route existence is
+  never observable to an unauthenticated caller). Zero business logic lives here — every branch
+  either rejects with a fixed HTTP error or calls exactly one route handler.
+- **Nine routes**, each calling exactly one `DelegationService`/`ObservabilityService` method
+  (plus the shared `buildModelsInfo(config)` helper for `GET /v1/models`) — full table in
+  `REST_FREEZE.md`.
+- **Auth**: a single shared-secret bearer token (`src/rest/auth.js`), generated at first boot if
+  unset and persisted to disk so it survives restarts, compared with `crypto.timingSafeEqual`.
+  Required on every route, including reads.
+- **Shutdown**: `registerRestShutdownHandlers()` (`src/cli/restEntry.js`) — a richer sequence
+  than stdio's own `registerShutdownHandlers()` (untouched, zero edits): stop accepting
+  connections → bounded grace period → force-cancel any still non-terminal job → bounded wait
+  for settlement → exit. Triggered by `SIGINT`/`SIGTERM` only, no `stdin`-close trigger (REST
+  has no client pipe to watch).
 
 ## Workspace (persistence layer)
 

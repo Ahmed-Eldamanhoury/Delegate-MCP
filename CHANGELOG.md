@@ -1,5 +1,76 @@
 # Changelog
 
+## [2.8.0] - 2026-07-18
+
+REST API Foundation — implements [ADR-0011](docs/adr/ADR-0011-rest-api-foundation.md): a new,
+entirely opt-in HTTP transport (`src/cli/restEntry.js`) sitting alongside the existing stdio MCP
+server, mapping 1:1 onto the same two already-frozen internal services
+(`DelegationService`/`ObservabilityService`) every MCP handler already calls. Zero new business
+logic, zero MCP schema impact, zero change to an MCP-only deployment's behavior. **minor** per
+`docs/FOUNDATION_FREEZE.md`'s own versioning policy: new capability, zero change to any frozen
+MCP contract. 440/440 tests passing (313 at `v2.7.1` + 127 new: pre-implementation MCP
+characterization baseline plus every WP0–WP5 unit/integration/contract/security test).
+
+### Added
+- **`src/services/delegationBackend.js`**: `createDelegationBackend({config, logger, service?})`
+  — the transport-agnostic construction (`JobManager`/`bus`/`ObservabilityService`/
+  `DelegationService`/`EventHistoryStore` wiring) both `mcpServer.js` (stdio) and `restEntry.js`
+  (REST) now call independently, each producing a fully independent instance sharing no
+  module-level state.
+- **`src/rest/`**: the REST HTTP layer — `restServer.js` (request pipeline: body-size gate →
+  auth → route match → handler → error mapping → response), `router.js` (pure `:id`-param
+  matcher), `auth.js` (bearer-token check + token generation/persistence), `bodyLimit.js`
+  (Content-Length gate + streaming bound), `errors.js` (unified error-to-HTTP mapping),
+  `parsing.js` (query-param validation), `routes/jobs.js` / `routes/observability.js` /
+  `routes/models.js` (all 9 routes).
+- **`src/cli/restEntry.js`**: standalone REST entry point (`main()`, `buildRouteTable()`,
+  `registerRestShutdownHandlers()`) — never a flag on the existing `src/cli/entry.js`, never
+  reachable from stdio's boot path.
+- **9 new REST routes** — see `docs/REST_FREEZE.md` for the full frozen contract: `POST /v1/jobs`,
+  `GET /v1/jobs/:id`, `GET /v1/jobs`, `DELETE /v1/jobs/:id`, `GET /v1/jobs/:id/replay`,
+  `GET /v1/jobs/:id/timeline` (new, REST-only — no MCP mirror), `GET /v1/metrics`,
+  `GET /v1/snapshot`, `GET /v1/models`.
+- **`buildModelsInfo(config)`** (`src/models/schemas.js`): the structured model/effort/defaults
+  data, extracted from `delegateModelsHandler.js`'s former inline body — now the single source
+  both `delegate_models` (MCP) and `GET /v1/models` (REST) read from.
+- **7 new REST config fields** (`src/config/index.js`, all additive):
+  `CLAUDE_DELEGATE_REST_HOST`/`_PORT`/`_TOKEN`/`_TOKEN_FILE`/`_MAX_BODY_BYTES`/
+  `_SHUTDOWN_GRACE_MS`/`_SHUTDOWN_FORCE_EXIT_MS`.
+- **`docs/REST_FREEZE.md`**: the frozen REST contract, sibling to `FOUNDATION_FREEZE.md`/
+  `OBSERVABILITY_FREEZE.md`.
+- **127 new tests**: 2 new pre-implementation characterization files pinning the exact MCP
+  baseline REST is built on top of without disturbing
+  (`tests/fileJobStoreCoexistence.characterization.test.js`, `tests/
+  handlerGaps.malformedIdRegression.test.js`), plus `tests/delegationBackend.test.js` and 15 new
+  `tests/rest*.test.js` files (unit, integration, contract, and security coverage for every new
+  module and route).
+
+### Changed
+- **`src/services/delegationService.js`**: `getJob`/`cancelJob` gain a leading
+  `isValidJobId()` guard (shared with `workspaceManager.js`) — a malformed job id is now
+  rejected before ever reaching `JobManager`, but returns exactly what the pre-existing
+  unknown-id path already returned (`undefined`/`false`, never throws) — **zero observable
+  change** to any existing MCP tool, proven byte-identical by `tests/
+  handlerGaps.malformedIdRegression.test.js`.
+- **`src/server/mcpServer.js`**: its former inline construction block now calls
+  `createDelegationBackend()` instead — `new McpServer(...)` remains the literal first
+  statement, construction order otherwise byte-identical, `server._registeredTools` unchanged
+  across all 9 tools.
+- **`src/handlers/delegateModelsHandler.js`**: now calls `buildModelsInfo(config)` instead of
+  inlining the same logic — behavior-preserving, its existing characterization test passes
+  unmodified.
+- **`src/services/observabilityService.js`**: one comment corrected (a stale reference to
+  `mcpServer.js`'s former construction site, now `delegationBackend.js`) — no behavioral change.
+- **`tests/delegationService.test.js`**: new unit test proving the `isValidJobId()` guard
+  short-circuits before ever reaching `JobManager` for a malformed id.
+- **`tests/handlerGaps.characterization.test.js`**: new characterization tests pinning
+  repeat-cancel-on-cancelled/repeat-cancel-on-running and malformed/unknown job-id baselines,
+  ahead of and reused by this REST work.
+- **`tests/mcpServer.test.js`**: `selectJobStore`/`selectEventHistoryStore`/
+  `wireEventHistoryIfEnabled` import path updated to their new home, `delegationBackend.js`.
+- **`tests/transportBoundary.test.js`**: extended to `src/rest/routes/*.js` — the same
+  import-boundary check the existing MCP write-handler check already enforces.
+
 ## [2.7.1] - 2026-07-17
 
 Stage 1a/1b of `ADR-0010` (Unified Access Layer) — implements

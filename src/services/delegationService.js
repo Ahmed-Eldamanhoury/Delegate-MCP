@@ -3,6 +3,7 @@ import { DelegateTaskInputSchema } from "../models/schemas.js";
 import { toJobView, summarizeJob } from "../models/job.js";
 import * as defaultClaudeCliService from "./claudeCliService.js";
 import * as defaultWorkspaceManager from "./workspaceManager.js";
+import { isValidJobId } from "./workspaceManager.js";
 
 /**
  * The write-side counterpart to `ObservabilityService`: the single object every transport
@@ -60,6 +61,7 @@ export function createDelegationService({
       return jobId;
     },
     getJob(jobId) {
+      if (!isValidJobId(jobId)) return undefined;
       const job = jobManager.getJob(jobId);
       return job ? toJobView(job) : undefined;
     },
@@ -69,6 +71,7 @@ export function createDelegationService({
       return jobs.slice(-limit).reverse().map(summarizeJob);
     },
     cancelJob(jobId) {
+      if (!isValidJobId(jobId)) return false;
       return jobManager.cancelJob(jobId);
     },
   });

@@ -96,6 +96,79 @@ test("delegate_cancel: an already-terminal job's error message names its actual 
   assert.equal(response.content[0].text, `Job ${jobId} could not be cancelled (status: completed).`);
 });
 
+test("delegate_cancel: a repeat cancel on an already-cancelled job names 'cancelled' as its status", async () => {
+  // maxConcurrent: 0 keeps the job "queued" forever so the first cancelJob() takes the
+  // synchronous queued->cancelled path (jobManager.js's other path -- aborting a running
+  // job -- settles asynchronously later and is not what this pins). This is the exact
+  // "before" baseline ADR-0011's disclosed REST/MCP idempotency divergence (REST's DELETE
+  // is idempotent; today's MCP delegate_cancel is not) must diverge FROM, not accidentally
+  // change to match.
+  const jobManager = new JobManager({ maxConcurrent: 0 });
+  wireWorkspaceToEventBus({ bus: jobManager.bus, jobManager, config, logger });
+  const delegationService = newDelegationService(jobManager);
+  const cancel = createDelegateCancelHandler({ delegationService });
+  const jobId = jobManager.submit(delayTask(5, "done"));
+
+  const first = await cancel({ job_id: jobId });
+  assert.equal(first.isError, undefined);
+  assert.equal(jobManager.getJob(jobId).status, "cancelled");
+
+  const second = await cancel({ job_id: jobId });
+  assert.equal(second.isError, true);
+  assert.equal(second.content[0].text, `Job ${jobId} could not be cancelled (status: cancelled).`);
+});
+
+test("JobManager.cancelJob: a second call on the same still-unsettled running job also returns true, not false", async () => {
+  // Distinct code path from the queued-job test above: a RUNNING job's cancelJob() (jobManager.js
+  // lines 100-103) is fire-and-forget -- it only calls the AbortController's abort() and returns
+  // true immediately; the actual running->cancelled transition happens later, asynchronously,
+  // inside _run()'s catch block. Nothing removes the controller from `this.running` or checks
+  // "have I already been asked to cancel" before that transition settles, so today a second
+  // cancelJob() call in that window calls abort() again (a no-op on an already-aborted
+  // controller) and ALSO returns true -- not false, and the job is NOT yet "cancelled". Both
+  // calls here are synchronous with no await between them, so there is no microtask-ordering
+  // ambiguity about which state is observed. A future change chasing REST's idempotent-DELETE
+  // semantics (ADR-0011) that adds an in-flight-cancel guard must not silently flip this MCP
+  // behavior without a test catching it.
+  const jobManager = newJobManager();
+  const jobId = jobManager.submit(delayTask(50, "done"));
+  assert.equal(jobManager.getJob(jobId).status, "running", "delayTask's markRunning() fires synchronously inside submit()");
+
+  const first = jobManager.cancelJob(jobId);
+  const second = jobManager.cancelJob(jobId);
+
+  assert.equal(first, true);
+  assert.equal(second, true, "today, cancelJob() has no guard against a second abort() before the async settle");
+  assert.equal(jobManager.getJob(jobId).status, "running", "status hasn't transitioned yet -- both calls raced ahead of _run()'s async settle");
+
+  await jobManager.waitForCompletion(jobId); // let the aborted job actually settle so the process can exit cleanly
+  assert.equal(jobManager.getJob(jobId).status, "cancelled");
+});
+
+test("delegate_status / delegate_cancel: an unknown job id -- whether malformed-shaped or a well-formed-but-nonexistent UUID -- is treated identically", async () => {
+  // No isValidJobId() guard exists in DelegationService today (that's an ADR-0011 Stage 2
+  // addition) -- this pins that, pre-guard, delegate_status/delegate_cancel never throw and
+  // never special-case a malformed shape; every unknown id, regardless of shape, falls through
+  // to the same "No job found" path. Stage 2's guard must reproduce this, not introduce a new
+  // failure mode. "00000000-..." below is deliberately UUID-shaped (matches isValidJobId's
+  // own regex) -- it's the well-formed-but-unknown case, kept distinct from the genuinely
+  // malformed shapes so this test doesn't overclaim what each input actually exercises.
+  const jobManager = newJobManager();
+  const delegationService = newDelegationService(jobManager);
+  const status = createDelegateStatusHandler({ delegationService });
+  const cancel = createDelegateCancelHandler({ delegationService });
+
+  for (const malformed of ["", "../../etc/passwd", "not a uuid at all!!", "00000000-0000-0000-0000-000000000000"]) {
+    const statusResponse = await status({ job_id: malformed });
+    assert.equal(statusResponse.isError, true);
+    assert.equal(statusResponse.content[0].text, `No job found with id ${malformed}`);
+
+    const cancelResponse = await cancel({ job_id: malformed });
+    assert.equal(cancelResponse.isError, true);
+    assert.equal(cancelResponse.content[0].text, `No job found with id ${malformed}`);
+  }
+});
+
 test("delegate_history: status filter returns only jobs matching that exact status", async () => {
   const jobManager = newJobManager();
   const delegationService = newDelegationService(jobManager);

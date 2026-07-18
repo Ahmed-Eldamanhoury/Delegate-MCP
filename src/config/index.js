@@ -17,6 +17,7 @@ const PROJECT_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKSPACE_ROOT = join(PROJECT_ROOT, "workspace");
 const DEFAULT_JOB_STORE_DIR = join(PROJECT_ROOT, "job-store");
 const DEFAULT_EVENT_HISTORY_DIR = join(PROJECT_ROOT, "event-history");
+const DEFAULT_REST_TOKEN_FILE = join(PROJECT_ROOT, ".delegate-rest-token");
 
 export const READONLY_TOOLS = "Read Grep Glob WebSearch WebFetch";
 
@@ -30,6 +31,14 @@ export const DEFAULT_MAX_CONCURRENT_JOBS = 2;
 export const DEFAULT_MAX_JOB_HISTORY = 500;
 export const DEFAULT_MAX_WORKSPACE_HISTORY = 100;
 export const DEFAULT_MAX_EVENT_HISTORY_FILES = 100;
+
+// REST_STAGE_1B_IMPLEMENTATION_DESIGN.md §17: REST is entirely additive/opt-in -- none of these
+// fields are read by anything except the not-yet-connected src/rest/*, src/cli/restEntry.js.
+export const DEFAULT_REST_HOST = "127.0.0.1";
+export const DEFAULT_REST_PORT = 8787;
+export const DEFAULT_REST_MAX_BODY_BYTES = 1024 * 1024; // 1 MiB, ADR-0011 Security
+export const DEFAULT_REST_SHUTDOWN_GRACE_MS = 5000;
+export const DEFAULT_REST_SHUTDOWN_FORCE_EXIT_MS = 2000;
 
 /**
  * @typedef {Object} DelegateConfig
@@ -49,6 +58,13 @@ export const DEFAULT_MAX_EVENT_HISTORY_FILES = 100;
  * @property {string} eventHistoryDir
  * @property {number} maxEventHistoryFiles
  * @property {boolean} debugMode
+ * @property {string} restHost
+ * @property {number} restPort
+ * @property {string|undefined} restToken
+ * @property {string} restTokenFile
+ * @property {number} restMaxBodyBytes
+ * @property {number} restShutdownGraceMs
+ * @property {number} restShutdownForceExitMs
  */
 
 /**
@@ -81,5 +97,13 @@ export function loadConfig(env = process.env) {
     maxEventHistoryFiles:
       Number(env.CLAUDE_DELEGATE_MAX_EVENT_HISTORY_FILES) || DEFAULT_MAX_EVENT_HISTORY_FILES,
     debugMode: env[DEBUG_MODE_ENV_VAR] === "true",
+    restHost: env.CLAUDE_DELEGATE_REST_HOST || DEFAULT_REST_HOST,
+    restPort: Number(env.CLAUDE_DELEGATE_REST_PORT) || DEFAULT_REST_PORT,
+    restToken: env.CLAUDE_DELEGATE_REST_TOKEN || undefined,
+    restTokenFile: env.CLAUDE_DELEGATE_REST_TOKEN_FILE || DEFAULT_REST_TOKEN_FILE,
+    restMaxBodyBytes: Number(env.CLAUDE_DELEGATE_REST_MAX_BODY_BYTES) || DEFAULT_REST_MAX_BODY_BYTES,
+    restShutdownGraceMs: Number(env.CLAUDE_DELEGATE_REST_SHUTDOWN_GRACE_MS) || DEFAULT_REST_SHUTDOWN_GRACE_MS,
+    restShutdownForceExitMs:
+      Number(env.CLAUDE_DELEGATE_REST_SHUTDOWN_FORCE_EXIT_MS) || DEFAULT_REST_SHUTDOWN_FORCE_EXIT_MS,
   });
 }

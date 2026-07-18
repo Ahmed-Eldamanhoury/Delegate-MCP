@@ -73,3 +73,31 @@ for (const [file, { factory, allowJobManager }] of Object.entries(WRITE_SIDE_HAN
     }
   );
 }
+
+// WP5 (REST_STAGE_1B_IMPLEMENTATION_DESIGN.md §11 Transport Boundaries): "REST never imports
+// JobManager, RuntimeEventBus, or FileJobStore directly in any routes/*.js file -- only
+// backend.delegationService/backend.observabilityService, injected." Extends this file's existing
+// import-boundary-checking pattern to src/rest/routes/*.js, the REST-side analog of the MCP check
+// above.
+
+const FORBIDDEN_SERVICE_IMPORTS = ["jobManager.js", "runtimeEventBus.js", "fileJobStore.js"];
+
+const REST_ROUTE_FILES = {
+  "jobs.js": { factory: "createJobRoutes", requiredParam: "delegationService" },
+  "observability.js": { factory: "createObservabilityRoutes", requiredParam: "observabilityService" },
+  "models.js": { factory: "createModelsRoute", requiredParam: "config" },
+};
+
+for (const [file, { factory, requiredParam }] of Object.entries(REST_ROUTE_FILES)) {
+  test(`src/rest/routes/${file}: never imports JobManager/RuntimeEventBus/FileJobStore directly -- only ${requiredParam}, injected`, () => {
+    const source = readFileSync(`src/rest/routes/${file}`, "utf8");
+
+    const serviceImports = [...source.matchAll(/from\s+["'][./]+services\/([\w.]+)["']/g)].map((m) => m[1]);
+    for (const forbidden of FORBIDDEN_SERVICE_IMPORTS) {
+      assert.ok(!serviceImports.includes(forbidden), `${file} must not statically import ${forbidden}`);
+    }
+
+    const params = factoryParams(source, factory);
+    assert.ok(params.includes(requiredParam), `${file}'s ${factory} must accept a ${requiredParam} dependency`);
+  });
+}

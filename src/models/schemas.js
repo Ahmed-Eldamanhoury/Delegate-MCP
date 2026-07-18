@@ -7,6 +7,27 @@ export const MODELS = ["haiku", "sonnet", "opus", "fable"];
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 
 /**
+ * The structured data both delegate_models (MCP) and GET /v1/models (REST) list -- extracted from
+ * delegateModelsHandler.js's former inline body (REST_STAGE_1B_IMPLEMENTATION_DESIGN.md §12).
+ * Deliberately returns ONLY structured data, no MCP-specific text formatting: delegateModelsHandler.js
+ * keeps its own thin text-line-per-model loop, built from this return value; REST's handleModels
+ * returns this object as the JSON body directly.
+ * @param {import("../config/index.js").DelegateConfig} config
+ * @returns {{models: {model: string, fallback: string|null}[], efforts: string[], defaults: {model: string, effort: string, maxBudgetUsd: number}}}
+ */
+export function buildModelsInfo(config) {
+  const models = MODELS.map((model) => ({
+    model,
+    fallback: config.modelFallbacks[model] ?? null,
+  }));
+  return {
+    models,
+    efforts: EFFORTS,
+    defaults: { model: "sonnet", effort: "low", maxBudgetUsd: config.defaultMaxBudgetUsd },
+  };
+}
+
+/**
  * Raw zod shape for the `delegate_task` tool input. Kept byte-for-byte identical to the
  * pre-refactor inline schema — the public MCP tool interface must not change.
  */

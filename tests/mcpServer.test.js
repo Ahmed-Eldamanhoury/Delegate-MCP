@@ -3,12 +3,12 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createMcpServer } from "../src/server/mcpServer.js";
 import {
   selectJobStore,
   selectEventHistoryStore,
   wireEventHistoryIfEnabled,
-  createMcpServer,
-} from "../src/server/mcpServer.js";
+} from "../src/services/delegationBackend.js";
 import { InMemoryJobStore } from "../src/services/jobStore.js";
 import { FileJobStore } from "../src/services/fileJobStore.js";
 import { createRuntimeEventBus } from "../src/services/runtimeEventBus.js";

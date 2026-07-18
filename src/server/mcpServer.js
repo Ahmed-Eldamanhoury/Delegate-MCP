@@ -2,15 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { DelegateTaskInputShape } from "../models/schemas.js";
 import { JOB_STATUS } from "../models/job.js";
-import { JobManager } from "../services/jobManager.js";
-import { InMemoryJobStore } from "../services/jobStore.js";
-import { FileJobStore } from "../services/fileJobStore.js";
-import { createRuntimeEventBus } from "../services/runtimeEventBus.js";
-import { wireWorkspaceToEventBus } from "../services/workspaceEventBridge.js";
-import { createObservabilityService } from "../services/observabilityService.js";
-import { createDelegationService } from "../services/delegationService.js";
-import { createEventHistoryStore } from "../services/eventHistoryStore.js";
-import { wireEventHistoryToEventBus } from "../services/eventHistoryBridge.js";
+import { createDelegationBackend } from "../services/delegationBackend.js";
 import { createDelegateTaskHandler } from "../handlers/delegateTaskHandler.js";
 import { createDelegateSubmitHandler } from "../handlers/delegateSubmitHandler.js";
 import { createDelegateStatusHandler } from "../handlers/delegateStatusHandler.js";
@@ -39,106 +31,20 @@ const JOB_ID_FIELD = z
   .describe("Job id, as returned by delegate_task, delegate_submit, or delegate_history.");
 
 /**
- * Picks the JobStore implementation per config.jobStore. Extracted as its own exported
- * function so it's unit-testable without constructing a full McpServer, which returns
- * only the server instance and never exposes its internal JobManager/store.
- * @param {import("../config/index.js").DelegateConfig} config
- * @param {{warn: Function}} [logger]
- * @returns {import("../services/jobStore.js").JobStore}
- */
-export function selectJobStore(config, logger) {
-  if (config.jobStore === "file") {
-    return new FileJobStore({ dir: config.jobStoreDir, logger });
-  }
-  return new InMemoryJobStore();
-}
-
-/**
- * Constructs the single, shared `EventHistoryStore` per `config.eventHistory` (ADR-0006),
- * mirroring `selectJobStore`'s shape: extracted as its own exported function so it's
- * unit-testable without constructing a full McpServer. This is the ONE construction point for
- * this stateless store (ponytail-audit finding: it used to be built twice -- once here, once
- * again inside `createObservabilityService` -- both gated on the identical condition and
- * pointed at the identical directory). `createMcpServer` calls this once and threads the single
- * resulting instance into both `wireEventHistoryIfEnabled` (the write-side bridge) and
- * `createObservabilityService` (ReplayEngine's durable read tier). When `config.eventHistory`
- * is unset or `"memory"` this returns `undefined` -- default behavior stays byte-identical to
- * before this feature existed.
- * @param {import("../config/index.js").DelegateConfig} config
- * @param {{warn: Function}} [logger]
- * @returns {ReturnType<typeof createEventHistoryStore>|undefined}
- */
-export function selectEventHistoryStore(config, logger) {
-  if (config.eventHistory !== "file") return undefined;
-  return createEventHistoryStore({ dir: config.eventHistoryDir, logger });
-}
-
-/**
- * Wires an already-constructed `EventHistoryStore` into the write-side bus bridge (ADR-0006).
- * Gating now happens exactly once, in `createMcpServer`, when deciding whether to construct the
- * store at all (`selectEventHistoryStore`) -- this function no longer checks
- * `config.eventHistory` or builds its own store; it only uses whatever `eventHistoryStore` it's
- * given, so passing `undefined` (the default-config case) is a no-op.
- * @param {{bus: object, eventHistoryStore?: ReturnType<typeof createEventHistoryStore>, config: import("../config/index.js").DelegateConfig}} deps
- * @returns {(() => void)|undefined} unsubscribe, or undefined when eventHistoryStore is undefined
- */
-export function wireEventHistoryIfEnabled({ bus, eventHistoryStore, config }) {
-  if (!eventHistoryStore) return undefined;
-  return wireEventHistoryToEventBus({ bus, eventHistoryStore, maxFiles: config.maxEventHistoryFiles });
-}
-
-/**
  * @param {{config: import("../config/index.js").DelegateConfig, logger: ReturnType<import("../logging/logger.js").createLogger>, version: string}} deps
  */
 export function createMcpServer({ config, logger, version }) {
   const server = new McpServer({ name: "claude-delegate", version });
-  const bus = createRuntimeEventBus({ logger });
-  const jobManager = new JobManager({
-    store: selectJobStore(config, logger),
-    maxConcurrent: config.maxConcurrentJobs,
-    maxHistory: config.maxJobHistory,
-    logger,
-    bus,
-  });
-  // ADR-0002 Phase 4: Workspace is a bus subscriber, not a direct call from delegationService
-  // (except createJobWorkspace — see delegationService.js for why). Extension point for
-  // future consumers (History/Dashboard/plugins): subscribe to the same `bus` instance;
-  // nothing here needs to change for them to hook in.
-  wireWorkspaceToEventBus({ bus, jobManager, config, logger });
 
-  // ADR-0003 Phase 1: Observability is a second, independent bus.subscribeAll() consumer,
-  // read-only by construction (Passive Observation Rule) — it holds no reference to
-  // jobManager or claudeCliService, only the bus. Its subscription closures live inside the
-  // bus itself (same pattern wireWorkspaceToEventBus already uses above), so no local binding
-  // is needed here. ADR-0007's delegate_replay (registered below) is now its first MCP
-  // consumer, calling replay() specifically; every other method still has none.
-  //
-  // Task 5: the instance itself IS kept (returned below, alongside `server`) so its close()
-  // (unsubscribe from the bus) is reachable during graceful shutdown -- previously constructed
-  // here and immediately discarded, so close() was never callable from anywhere.
-
-  // ADR-0006: EventHistoryStore is stateless and constructed exactly ONCE here, opt-in via
-  // config.eventHistory (default "memory" = off, byte-identical to before this feature existed).
-  // The single resulting instance is shared by both ObservabilityService's ReplayEngine durable
-  // tier (below) and the write-side bridge (wireEventHistoryIfEnabled, further below) -- fixing
-  // a ponytail-audit finding where each independently built its own instance over the identical
-  // directory, under the identical gate.
-  const eventHistoryStore = selectEventHistoryStore(config, logger);
-
-  const observabilityService = createObservabilityService({
-    bus,
+  // WP0 (REST_STAGE_1B_IMPLEMENTATION_DESIGN.md §4): every construction step that used to be
+  // inlined here (bus, jobManager, workspace wiring, eventHistoryStore, observabilityService,
+  // eventHistory bridge, delegationService) now lives in the transport-agnostic
+  // createDelegationBackend() -- `restEntry.js` calls the exact same function independently.
+  // Zero new logic, same relative construction order as before, just wrapped in one call.
+  const { jobManager, observabilityService, delegationService, eventHistoryStore } = createDelegationBackend({
     config,
     logger,
-    maxTimelineHistory: config.maxJobHistory,
-    eventHistoryStore,
   });
-
-  wireEventHistoryIfEnabled({ bus, eventHistoryStore, config });
-
-  // ADR-0010 Stage 1b: the single DelegationService instance every transport adapter's
-  // handler routes through (submit/getJob/listJobs/cancelJob) -- constructed once here and
-  // reused by every WP in this sprint that reroutes a handler (see delegationService.js).
-  const delegationService = createDelegationService({ jobManager, config, logger });
 
   server.registerTool(
     "delegate_task",

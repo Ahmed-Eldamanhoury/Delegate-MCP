@@ -176,6 +176,33 @@ test("listJobs() with an explicit status filters correctly", async () => {
   assert.equal(failedJobs[0].id, failedId);
 });
 
+test("getJob()/cancelJob(): a malformed (non-UUID-shaped) job id is rejected by the isValidJobId() guard before ever reaching jobManager -- never throws, returns undefined/false", () => {
+  // WP1 (REST_STAGE_1B_IMPLEMENTATION_DESIGN.md §5): the isValidJobId() guard must never throw,
+  // returning exactly what the pre-existing unknown-id path already returns -- undefined/false --
+  // for a malformed id too. The observable return value alone can't prove the guard exists (a
+  // Map-miss on jobManager already returns the same values) -- a spy jobManager that throws if
+  // ever called with a malformed id is what actually fails before the guard exists and passes
+  // once it short-circuits before reaching jobManager at all.
+  const config = loadConfig({});
+  const jobManager = {
+    getJob(id) {
+      throw new Error(`jobManager.getJob must not be called for malformed id: ${id}`);
+    },
+    cancelJob(id) {
+      throw new Error(`jobManager.cancelJob must not be called for malformed id: ${id}`);
+    },
+  };
+  const delegationService = createDelegationService({ jobManager, config, logger });
+
+  for (const malformed of ["", "../../etc/passwd", "not a uuid at all!!"]) {
+    assert.doesNotThrow(() => delegationService.getJob(malformed));
+    assert.equal(delegationService.getJob(malformed), undefined);
+
+    assert.doesNotThrow(() => delegationService.cancelJob(malformed));
+    assert.equal(delegationService.cancelJob(malformed), false);
+  }
+});
+
 test("cancelJob() is a pure pass-through returning exactly what jobManager.cancelJob returns", () => {
   const bus = createRuntimeEventBus();
   const manager = new JobManager({ bus, maxConcurrent: 1 });

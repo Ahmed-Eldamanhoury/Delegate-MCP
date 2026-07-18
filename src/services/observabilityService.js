@@ -26,8 +26,8 @@ export function createObservabilityService({ bus, config, logger, maxTimelineHis
   const metrics = createMetricsCollector({ config, logger });
   const timeline = createTimelineStore({ maxTimelineHistory });
   // ADR-0006: ReplayEngine's durable tier uses the EventHistoryStore instance passed in by the
-  // caller (mcpServer.js's createMcpServer constructs it once, shared with the write-side
-  // bridge -- see selectEventHistoryStore there) rather than building its own; this function no
+  // caller (delegationBackend.js's createDelegationBackend constructs it once, shared with the
+  // write-side bridge -- see selectEventHistoryStore there) rather than building its own; this function no
   // longer constructs an EventHistoryStore at all. When not passed (e.g. an existing test/caller
   // that doesn't touch this feature), eventHistoryStore stays undefined and ReplayEngine's
   // behavior is byte-identical to before this feature existed.
