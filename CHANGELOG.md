@@ -1,5 +1,33 @@
 # Changelog
 
+## [2.9.4] - 2026-07-18
+
+Production patch release. Fixes a genuine defect discovered and repaired during the Production
+Acceptance Test for v2.9.3. **No API changes. No architecture changes. No feature additions.**
+
+### Fixed
+
+- **`src/services/delegationService.js`**: `DelegateTaskInputSchema.parse(input)` result was
+  discarded — the raw, unprocessed `input` object was passed directly to `createExecutionContext`
+  instead of the Zod-parsed output. When callers omitted optional fields (`max_budget_usd`,
+  `allowed_tools`, `trust_all`), Zod's defaults were never applied: `createExecutionContext`
+  received `undefined` for those fields, causing the CLI to be invoked with
+  `--max-budget-usd undefined` and exit immediately with code 1.
+  Fix: `const parsed = DelegateTaskInputSchema.parse(input); createExecutionContext(parsed, config)`.
+  Zod defaults now apply for every submission path (MCP + REST). End-to-end verified: job
+  submitted without `max_budget_usd`, ran to completion, `exitCode: 0`.
+
+### Not changed
+
+- REST routes — none modified.
+- MCP interfaces — none modified.
+- Application source beyond the single 2-line fix — unchanged.
+- Authentication — unchanged.
+- Dashboard source (`dashboard/src/`) — unchanged.
+- Security invariants (RC6) — unchanged.
+- Test suites — unchanged (466/466 server, 108/108 dashboard).
+- All 12 ADRs remain FROZEN.
+
 ## [2.9.3] - 2026-07-18
 
 Maintenance release following the Official Certified Baseline (v2.9.2). Contains CI compatibility
