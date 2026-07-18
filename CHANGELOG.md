@@ -1,5 +1,43 @@
 # Changelog
 
+## [2.9.3] - 2026-07-18
+
+Maintenance release following the Official Certified Baseline (v2.9.2). Contains CI compatibility
+improvements and multilingual documentation only. **Zero application behaviour change.** No REST
+contract change, no MCP schema change, no authentication change, no dashboard change, no
+architectural change. Application functionality is identical to v2.9.2.
+
+### Changed
+
+- **`.github/workflows/ci.yml`**: Replaced `npm test` (which invoked `node --test tests/**/*.test.js`
+  via `/bin/sh`/dash — no globstar support on Ubuntu) with `shell: bash` and
+  `node --test tests/*.test.js`. Bash is available on all GitHub Actions runners (Ubuntu and
+  Windows). Single `*` is correct for the flat `tests/` directory. All 4 matrix combinations
+  (ubuntu-latest/windows-latest × Node 20/Node 22) now pass.
+
+### Added
+
+- **`docs/en/PROJECT_OVERVIEW.md`**: Canonical English project overview — 21 sections covering
+  architecture, REST API, MCP tools, job lifecycle, security model, ADR registry, known
+  limitations, and deployment. Includes Mermaid diagrams and reference tables.
+- **`docs/ar/PROJECT_OVERVIEW.md`**: Faithful Arabic translation of the canonical overview.
+  Technical terms (MCP, REST API, Replay, Dashboard, Authentication, etc.) preserved in English.
+  All Mermaid diagrams and tables translated to Arabic.
+- **`README.md`**: Language selector added after the title — links to English and Arabic
+  project overviews.
+- **`docs/{fr,es,zh}/`**: Empty directory stubs prepared for future language additions.
+
+### Not changed
+
+- REST routes — none modified.
+- MCP interfaces — none modified.
+- Application source (`src/`, `server.js`, `restServer.js`) — unchanged.
+- Authentication — unchanged.
+- Dashboard source (`dashboard/src/`) — unchanged.
+- Security invariants (RC6: no `innerHTML`/`dangerouslySetInnerHTML`) — unchanged.
+- Test suites — unchanged (466/466 server, 108/108 dashboard).
+- All 12 ADRs remain FROZEN.
+
 ## [2.9.1] - 2026-07-18
 
 Operational patch — adds the missing `restServer.js` runtime entry point specified in the WP2
