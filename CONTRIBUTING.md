@@ -29,6 +29,14 @@ welcome via pull request, but note there is currently no CI configured — revie
 By submitting a pull request you agree that your contribution is licensed under the
 [Apache License, Version 2.0](LICENSE) — the same license as this project.
 
+## Distribution
+
+This project is distributed via **GitHub clone**, not the npm registry.
+`package.json` contains `"private": true` intentionally — this prevents accidental `npm publish`.
+The package is a locally-run MCP server invoked directly (`node server.js`, `node restServer.js`);
+it is not intended for nor suitable as an npm package dependency.
+To install, clone the repository and run `npm install` to fetch dependencies.
+
 ## Reporting bugs / requesting features
 
 Use the GitHub [issue templates](https://github.com/Ahmed-Eldamanhoury/Delegate-MCP/issues/new/choose).
