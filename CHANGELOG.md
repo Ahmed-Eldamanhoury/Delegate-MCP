@@ -1,5 +1,35 @@
 # Changelog
 
+## [2.9.1] - 2026-07-18
+
+Operational patch — adds the missing `restServer.js` runtime entry point specified in the WP2
+design and corrects `docs/DEPLOYMENT.md`'s start command. **Zero application behaviour change.**
+No REST contract change, no MCP schema change, no authentication change, no dashboard change.
+466/466 server tests + 108/108 dashboard tests unchanged. Independently certified
+(`HOTFIX CERTIFIED` 2026-07-18) before tagging.
+
+### Added
+
+- **`restServer.js`**: top-level entry point that imports `main()` from `src/cli/restEntry.js`
+  and calls it. Mirrors `server.js`→`entry.js` pattern for the MCP transport. Was specified
+  in the WP2 design ("restEntry.js + restServer.js skeleton") but not created at implementation
+  time, causing `node src/cli/restEntry.js` to exit immediately (that file exports `main()` but
+  never calls it — by design, so tests can import it). Correct start command: `node restServer.js`.
+
+### Fixed
+
+- **`docs/DEPLOYMENT.md`**: start command corrected from `node src/cli/restEntry.js` to
+  `node restServer.js`.
+
+### Not changed
+
+- REST routes — none modified.
+- MCP interfaces — none modified.
+- Authentication (`auth.js`, `timingSafeEqual`) — unchanged.
+- Dashboard source (`dashboard/src/`) — unchanged.
+- Security invariants (RC6: no `innerHTML`/`dangerouslySetInnerHTML`) — unchanged.
+- Test suites — unchanged (466/466 server, 108/108 dashboard).
+
 ## [2.9.0] - 2026-07-18
 
 Dashboard Stage 3 — implements [ADR-0012](docs/adr/ADR-0012-dashboard.md): a React SPA served
