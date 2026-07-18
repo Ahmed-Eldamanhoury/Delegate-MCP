@@ -1,5 +1,7 @@
 # claude-delegate-mcp
 
+> **Documentation** — 🇺🇸 [English](docs/en/PROJECT_OVERVIEW.md) · 🇸🇦 [العربية](docs/ar/PROJECT_OVERVIEW.md)
+
 An MCP server for Claude Desktop that hands tasks off to a headless Claude Code CLI session
 (`claude -p`), running a cheaper/different model tier. It shells out to the `claude` binary
 already logged into your Claude subscription — no separate Anthropic API key or billing
