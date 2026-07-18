@@ -50,8 +50,8 @@ export function createDelegationService({
 }) {
   return Object.freeze({
     submit(input, toolName) {
-      DelegateTaskInputSchema.parse(input);
-      const context = createExecutionContext(input, config);
+      const parsed = DelegateTaskInputSchema.parse(input);
+      const context = createExecutionContext(parsed, config);
       const jobId = jobManager.submit(
         (signal, markRunning, jobId) =>
           service.invoke(input.prompt, context, config, { signal, onSpawn: markRunning, bus: jobManager.bus, jobId }),
