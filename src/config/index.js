@@ -18,6 +18,7 @@ const DEFAULT_WORKSPACE_ROOT = join(PROJECT_ROOT, "workspace");
 const DEFAULT_JOB_STORE_DIR = join(PROJECT_ROOT, "job-store");
 const DEFAULT_EVENT_HISTORY_DIR = join(PROJECT_ROOT, "event-history");
 const DEFAULT_REST_TOKEN_FILE = join(PROJECT_ROOT, ".delegate-rest-token");
+const DEFAULT_DASHBOARD_DIR = join(PROJECT_ROOT, "dashboard", "dist");
 
 export const READONLY_TOOLS = "Read Grep Glob WebSearch WebFetch";
 
@@ -65,6 +66,7 @@ export const DEFAULT_REST_SHUTDOWN_FORCE_EXIT_MS = 2000;
  * @property {number} restMaxBodyBytes
  * @property {number} restShutdownGraceMs
  * @property {number} restShutdownForceExitMs
+ * @property {string} dashboardDir
  */
 
 /**
@@ -105,5 +107,6 @@ export function loadConfig(env = process.env) {
     restShutdownGraceMs: Number(env.CLAUDE_DELEGATE_REST_SHUTDOWN_GRACE_MS) || DEFAULT_REST_SHUTDOWN_GRACE_MS,
     restShutdownForceExitMs:
       Number(env.CLAUDE_DELEGATE_REST_SHUTDOWN_FORCE_EXIT_MS) || DEFAULT_REST_SHUTDOWN_FORCE_EXIT_MS,
+    dashboardDir: env.CLAUDE_DELEGATE_DASHBOARD_DIR || DEFAULT_DASHBOARD_DIR,
   });
 }

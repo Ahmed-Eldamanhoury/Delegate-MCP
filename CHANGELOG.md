@@ -1,5 +1,45 @@
 # Changelog
 
+## [2.9.0] - 2026-07-18
+
+Dashboard Stage 3 — implements [ADR-0012](docs/adr/ADR-0012-dashboard.md): a React SPA served
+directly from the existing REST server at `/dashboard/`, consuming only the frozen REST API
+(`REST_FREEZE.md`). Zero new REST endpoints. Zero MCP schema impact. Zero change to any frozen
+contract. **minor** per `docs/REST_FREEZE.md`'s own versioning policy: new capability, no change
+to any existing route or MCP contract. 108/108 dashboard tests (Vitest) + 466/466 server tests
+(node:test). Production build: 49 modules, 184.96 kB / 58.18 kB gzip. Independent certification:
+CERTIFIED (0 BLOCKER, 0 HIGH). All 4 certification findings subsequently closed.
+
+### Added
+
+- **`dashboard/`**: React 18 + React Router v6 SPA — 7 screens (S1 Login, S2 Overview, S3 Jobs,
+  S4 Job Detail, S5 Metrics, S6 Submit, S7 Models), 4 polling hooks (`useSnapshot`, `useJobs`,
+  `useJobSubscription`, `useMetrics`), shared utilities (`lib/fmt.js`, `lib/auth.js`,
+  `lib/client.js`, `lib/baseUrl.js`), `NavBar` component, 17 Vitest test files.
+  Build command: `npm --prefix dashboard run build` → `dashboard/dist/`.
+- **`src/rest/dashboard.js`**: `isDashboardRequest()` predicate + `serveDashboard()` static-file
+  handler. `GET /dashboard/config.js` injects `window.__DELEGATE_REST__` dynamically.
+  All `/dashboard/*` routes served **before** the auth gate (intentionally unauthenticated).
+  Path-traversal guard: resolved path must start with `dashboardDir + sep`.
+- **`docs/adr/ADR-0012-dashboard.md`**: canonical architecture decision record (FROZEN).
+- **`docs/DEPLOYMENT.md`**: deployment prerequisites — dashboard build command, bearer-token
+  setup, server start command, access URL, release checklist additions.
+- **`docs/releases/RELEASE_NOTES_v2.9.0.md`**: human-readable release summary.
+- **`docs/releases/DASHBOARD_RELEASE_REPORT.md`**: certification evidence index.
+- 2 new server test files (`tests/restDashboard.unit.test.js`, `tests/restDashboard.integration.test.js`)
+  covering `isDashboardRequest`, `serveDashboard`, path-traversal guard, config stub, MIME types.
+
+### Changed
+
+- **`src/config/index.js`**: `dashboardDir` config field added (default: `dashboard/dist/`
+  relative to project root) — additive, no existing field changed.
+- **`src/rest/restServer.js`**: `isDashboardRequest` check routed before auth gate —
+  non-breaking, purely additive path.
+- **`tests/configValidation.test.js`**: 2 new tests for `dashboardDir` (present, defaults
+  correctly) — additive to pre-existing suite.
+- **`docs/ARCHITECTURE.md`**: `dashboard.js` entry added to the file-tree section.
+- **`.gitignore`**: `dashboard/dist/` added (build artifacts not committed).
+
 ## [2.8.0] - 2026-07-18
 
 REST API Foundation — implements [ADR-0011](docs/adr/ADR-0011-rest-api-foundation.md): a new,

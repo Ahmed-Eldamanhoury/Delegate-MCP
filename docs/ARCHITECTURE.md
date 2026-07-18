@@ -14,12 +14,15 @@ src/
   server/health.js        non-blocking check that the configured claude binary exists
   handlers/                one file per tool: MCP-shaped request/response formatting
   rest/                    REST HTTP layer (ADR-0011) -- see "REST API" below for the full contract
-    restServer.js            createRestServer(): request pipeline (body-limit -> auth -> route match -> handler -> error mapping -> response)
+    restServer.js            createRestServer(): request pipeline (dashboard pre-auth -> body-limit -> auth -> route match -> handler -> error mapping -> response)
     router.js                pure :id-param path matcher, no I/O
     auth.js                   bearer-token check (pure) + token generation/persistence (side-effecting, called once at boot)
     bodyLimit.js              Content-Length pre-check (every route) + streaming bound (scoped to POST /v1/jobs only)
     errors.js                 unified {status, body} error mapping -- REST's toToolErrorContent() analog
     parsing.js                query-param validation (status/limit/type/since); :id is deliberately never validated here
+    dashboard.js              ADR-0012 WP0: isDashboardRequest() predicate + serveDashboard() static-file handler;
+                                 GET /dashboard/config.js returns window.__DELEGATE_REST__ dynamically;
+                                 all /dashboard/* routes served BEFORE the auth gate (intentionally unauthenticated)
     routes/jobs.js             POST /v1/jobs, GET /v1/jobs/:id, GET /v1/jobs, DELETE /v1/jobs/:id
     routes/observability.js    GET /v1/jobs/:id/replay, /timeline, /v1/metrics, /v1/snapshot
     routes/models.js           GET /v1/models

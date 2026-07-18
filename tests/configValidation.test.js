@@ -88,3 +88,23 @@ test("loadConfig's maxEventHistoryFiles default is backward compatible -- pins t
   assert.equal(config.maxEventHistoryFiles, 100);
   assert.doesNotThrow(() => validateConfig(config));
 });
+
+// ADR-0012 WP0: dashboardDir config field
+
+test("loadConfig provides a dashboardDir field that ends with dashboard/dist by default", () => {
+  const config = loadConfig({});
+  assert.ok(typeof config.dashboardDir === "string" && config.dashboardDir.length > 0, "dashboardDir must be a non-empty string");
+  assert.ok(
+    config.dashboardDir.replace(/\\/g, "/").endsWith("dashboard/dist"),
+    `dashboardDir default must end with dashboard/dist, got: ${config.dashboardDir}`
+  );
+});
+
+test("CLAUDE_DELEGATE_DASHBOARD_DIR env var overrides dashboardDir", () => {
+  const config = loadConfig({ CLAUDE_DELEGATE_DASHBOARD_DIR: "/custom/path/to/dist" });
+  assert.equal(config.dashboardDir, "/custom/path/to/dist");
+});
+
+test("validateConfig accepts default config including dashboardDir (ADR-0012 WP0 non-regression)", () => {
+  assert.doesNotThrow(() => validateConfig(loadConfig({})));
+});

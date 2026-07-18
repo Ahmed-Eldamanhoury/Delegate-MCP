@@ -3,6 +3,7 @@ import { matchRoute } from "./router.js";
 import { checkBearerToken } from "./auth.js";
 import { checkContentLengthLimit } from "./bodyLimit.js";
 import { createErrorMapper } from "./errors.js";
+import { isDashboardRequest, serveDashboard } from "./dashboard.js";
 
 function sendJson(res, status, body, headers = {}) {
   // Build the payload BEFORE writeHead() -- if JSON.stringify() throws (e.g. a circular
@@ -37,6 +38,14 @@ export function createRestServer({ backend, config, logger, token, routes = [] }
   const toHttpError = createErrorMapper({ logger });
 
   const server = createServer((req, res) => {
+    // Dashboard static files are served BEFORE the auth gate -- intentionally unauthenticated
+    // because they expose no confidential information (ADR-0012 §8, WP0 LOW-1 fix).
+    const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+    if (isDashboardRequest(url.pathname)) {
+      serveDashboard(req, res, config);
+      return;
+    }
+
     if (!checkContentLengthLimit(req, config.restMaxBodyBytes)) {
       // "Connection: close" (not an immediate req.socket.destroy()) -- the socket must stay open
       // long enough to flush this very response; Node closes it once the response is fully
@@ -53,7 +62,6 @@ export function createRestServer({ backend, config, logger, token, routes = [] }
       return;
     }
 
-    const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
     const matched = matchRoute(req.method, url.pathname, routes);
     if (matched.status === "not-found") {
       sendJson(res, 404, { error: { code: "NOT_FOUND", message: "No such route" } });
