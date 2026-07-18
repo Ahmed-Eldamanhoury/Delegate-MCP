@@ -33,7 +33,7 @@ export CLAUDE_DELEGATE_REST_TOKEN=<your-token>
 ## Starting the REST server
 
 ```
-node src/cli/restEntry.js
+node restServer.js
 ```
 
 Default bind: `127.0.0.1:8787`. Override with `CLAUDE_DELEGATE_REST_HOST` / `CLAUDE_DELEGATE_REST_PORT`.
